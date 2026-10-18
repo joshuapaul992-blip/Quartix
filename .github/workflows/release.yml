@@ -1,0 +1,58 @@
+name: release
+
+# Run from the Actions tab ("Run workflow"). Builds the version in src/quartix.h,
+# runs the tests, signs Quartix.exe with the QUARTIX_SIGNING_KEY secret and
+# publishes it as release v<version>, which `Quartix.exe update` then picks up.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain and Wine
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 wine64 python3-cryptography
+      - name: Read version
+        id: version
+        run: |
+          v=$(sed -n 's/^#define QX_VERSION_A "\(.*\)"$/\1/p' src/quartix.h)
+          test -n "$v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "v$v" >/dev/null 2>&1; then
+            echo "::error::Release v$v already exists. Bump QX_VERSION_A in src/quartix.h first."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Build and test
+        run: make -j4 test WINE=/usr/lib/wine/wine64
+      - name: Sign
+        env:
+          QUARTIX_SIGNING_KEY: ${{ secrets.QUARTIX_SIGNING_KEY }}
+        run: |
+          if [ -z "$QUARTIX_SIGNING_KEY" ]; then
+            echo "::error::Add the private key as the QUARTIX_SIGNING_KEY repository secret."
+            exit 1
+          fi
+          umask 077
+          key=$(mktemp)
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$QUARTIX_SIGNING_KEY" > "$key"
+          make -s
+          python3 tools/check_xp_pe.py build/Quartix.exe
+          python3 tools/sign_update.py sign "$key" build/Quartix.exe "${{ steps.version.outputs.version }}"
+          python3 tools/verify_update.py keys/update_pubkey.txt build/Quartix.exe build/Quartix.exe.sig
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          gh release create "v$v" build/Quartix.exe build/Quartix.exe.sig \
+            --target "$GITHUB_SHA" --title "Quartix $v" \
+            --notes "Run \`Quartix.exe update\` to install, or download Quartix.exe below."

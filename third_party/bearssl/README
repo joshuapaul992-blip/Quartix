@@ -1,0 +1,3 @@
+BearSSL 0.6, unmodified src/, inc/ and tools/, from https://bearssl.org/bearssl-0.6.tar.gz
+(sha256 6705bba1714961b41a728dfc5debbe348d2966c117649392f8c8139efc83ff14).
+Used for TLS 1.2 on Windows XP x64, which has no native TLS 1.2. MIT licence, see LICENSE.txt.
