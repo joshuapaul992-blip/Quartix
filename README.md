@@ -17,14 +17,18 @@ Everything is also available from a command prompt:
 ```
 Quartix.exe help                         list the commands
 Quartix.exe info                         show install and data locations
-Quartix.exe import-apk roblox.apk        import the x86_64 Roblox APK
-Quartix.exe apk-ls roblox.apk            list what is inside an APK
+Quartix.exe import-apk roblox.apk        import the x86_64 Roblox APK (or .apks/.xapk/.apkm bundle)
+Quartix.exe apk-ls roblox.apk            list what is inside an APK or bundle
 Quartix.exe update                       download and install the latest signed release
 Quartix.exe update --check               only say whether an update is available
 Quartix.exe apply-update new.exe new.exe.sig  install a signed, newer build from local files
 ```
 
-Quartix does not ship or download the Roblox APK; you provide it.
+Quartix does not ship or download the Roblox APK; you provide it. A plain APK or
+an APK bundle (`.apks`, `.xapk`, or an unencrypted `.apkm`) both work, as long as it
+includes the x86_64 build of the native library. For a bundle, every APK inside is
+kept side by side, the base one is saved as `base.apk`, and the library is taken
+from the x86_64 split.
 
 ### Where things live
 
@@ -86,6 +90,8 @@ xvfb-run -a make test WINE=/usr/lib/wine/wine64   # window tests need a display
 
 [Monocypher](https://monocypher.org/) 4.0.2 (BSD-2-Clause / CC0) for Ed25519,
 vendored unmodified in `third_party/monocypher`.
+[miniz](https://github.com/richgel999/miniz) 3.0.2 (MIT), only its inflate, for
+compressed APK and bundle entries, vendored unmodified in `third_party/miniz`.
 [BearSSL](https://bearssl.org/) 0.6 (MIT) for TLS, vendored unmodified in
 `third_party/bearssl`. CA list generated from the Mozilla bundle by
 `tools/gen_trust_anchors.sh`.

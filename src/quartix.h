@@ -59,9 +59,9 @@ void qx_hex(const uint8_t *in, size_t n, char *out);
 
 /* apk.c
  * An APK is a zip. We read its central directory to find the native library for
- * our architecture and extract it. Only stored (uncompressed) entries are
- * extracted for now; APKs that load native libraries in place store them that way,
- * and a deflated entry is reported as an error rather than guessed at. */
+ * our architecture and extract it (stored or deflated). APK bundles (.apks, .xapk,
+ * .apkm) are zips of a base APK and split APKs; their APKs are unpacked side by
+ * side and the library is taken from whichever split carries it. */
 #define QX_APK_LIB "lib/x86_64/libroblox.so"
 
 typedef struct qx_apk_entry {

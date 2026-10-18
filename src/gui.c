@@ -63,7 +63,7 @@ static void refresh_apk_status(void)
     WIN32_FILE_ATTRIBUTE_DATA fa;
 
     if (qx_path_join(path, QX_PATH_MAX, g_paths->apk_dir, L"current") || !(f = _wfopen(path, L"rb"))) {
-        SetWindowTextW(g_apk_text, L"No APK imported yet. Import the x86_64 Roblox APK to get started.");
+        SetWindowTextW(g_apk_text, L"No APK imported yet. Import the x86_64 Roblox APK or APK bundle to get started.");
         return;
     }
     n = fread(raw, 1, sizeof(raw) - 1, f);
@@ -189,10 +189,10 @@ static void choose_apk(void)
     memset(&ofn, 0, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = g_wnd;
-    ofn.lpstrFilter = L"Android packages (*.apk)\0*.apk\0All files\0*.*\0";
+    ofn.lpstrFilter = L"APKs and APK bundles (*.apk, *.apks, *.xapk, *.apkm)\0*.apk;*.apks;*.xapk;*.apkm\0All files\0*.*\0";
     ofn.lpstrFile = j->apk;
     ofn.nMaxFile = QX_PATH_MAX;
-    ofn.lpstrTitle = L"Import the x86_64 Roblox APK";
+    ofn.lpstrTitle = L"Import the x86_64 Roblox APK or APK bundle";
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
     if (!GetOpenFileNameW(&ofn)) {
         free(j);
