@@ -13,22 +13,31 @@ LDFLAGS += -municode -static-libgcc \
            -Wl,--major-subsystem-version,5,--minor-subsystem-version,2
 LDLIBS  += -lshell32
 
+# Ed25519 public key (64 hex chars) that update signatures must verify against.
+# Without one the build refuses all updates. See tools/sign_update.py.
+UPDATE_PUBKEY ?= $(shell cat keys/update_pubkey.txt 2>/dev/null)
+
 SRC = src/main.c src/paths.c src/apk.c src/sha256.c src/update.c src/log.c
-OUT = build/Quartix.exe
+MONO = third_party/monocypher/monocypher.c third_party/monocypher/monocypher-ed25519.c
+OUT ?= build/Quartix.exe
 
 all: $(OUT)
 
-$(OUT): $(SRC) src/quartix.h
-	@mkdir -p build
-	$(CC) $(CFLAGS) $(SRC) -o $@ $(LDFLAGS) $(LDLIBS)
+$(OUT): $(SRC) $(MONO) src/quartix.h FORCE
+	@mkdir -p $(dir $@)
+	$(CC) -std=c99 -O2 -c third_party/monocypher/monocypher.c -o $(@:.exe=)-mono.o
+	$(CC) -std=c99 -O2 -c third_party/monocypher/monocypher-ed25519.c -o $(@:.exe=)-mono-ed.o
+	$(CC) $(CFLAGS) -DQX_UPDATE_PUBKEY='"$(UPDATE_PUBKEY)"' $(SRC) $(@:.exe=)-mono.o $(@:.exe=)-mono-ed.o -o $@ $(LDFLAGS) $(LDLIBS)
 
 check: $(OUT)
 	$(PYTHON) tools/check_xp_pe.py $(OUT)
 
 test: check
-	WINE="$(WINE)" $(PYTHON) tests/run_tests.py $(OUT)
+	WINE="$(WINE)" MAKE="$(MAKE)" $(PYTHON) tests/run_tests.py $(OUT)
 
 clean:
 	rm -rf build
 
-.PHONY: all check test clean
+FORCE:
+
+.PHONY: all check test clean FORCE
