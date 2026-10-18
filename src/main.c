@@ -8,7 +8,7 @@
 
 static void usage(void)
 {
-    qx_log("Quartix %ls - Roblox Android runtime host for Windows XP x64", QX_VERSION);
+    qx_log("Quartix %ls - Roblox APK manager for Windows XP x64", QX_VERSION);
     qx_log("usage:");
     qx_log("  quartix info                         show install and data locations");
     qx_log("  quartix import-apk <file.apk>        import the x86_64 Roblox APK");

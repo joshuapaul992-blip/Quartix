@@ -1,5 +1,5 @@
 /*
- * Quartix - a Roblox Android runtime host for Windows XP x64.
+ * Quartix - a Roblox APK manager for Windows XP x64.
  * Copyright (C) 2026 Quartix contributors. Licensed under GPLv3 (see LICENSE).
  */
 #ifndef QUARTIX_H
