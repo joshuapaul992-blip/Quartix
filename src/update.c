@@ -229,7 +229,7 @@ static int file_write(void *ctx, const void *data, size_t n)
     return WriteFile(fs->f, data, (DWORD)n, &wrote, NULL) && wrote == n ? 0 : -1;
 }
 
-int qx_update_online(const qx_paths *p, int check_only)
+int qx_update_online(const qx_paths *p, int check_only, char new_version[32])
 {
     struct mem_sink sig;
     struct file_sink fs;
@@ -247,7 +247,7 @@ int qx_update_online(const qx_paths *p, int check_only)
     r = qx_https_get(url, mem_write, &sig, sizeof(sig.buf) - 1);
     if (r > 0) {
         qx_log("no release published yet");
-        return 0;
+        return QX_UPDATE_NONE;
     }
     if (r < 0)
         return -1;
@@ -257,13 +257,15 @@ int qx_update_online(const qx_paths *p, int check_only)
     newer = is_newer(version);
     if (newer < 0)
         return -1;
+    if (new_version)
+        strcpy(new_version, version);
     if (!newer) {
         qx_log("up to date (%s)", QX_VERSION_A);
-        return 0;
+        return QX_UPDATE_CURRENT;
     }
     if (check_only) {
         qx_log("update available: %s -> %s", QX_VERSION_A, version);
-        return 0;
+        return QX_UPDATE_AVAILABLE;
     }
 
     /* Stage next to the executable so the final move stays on one volume. */
@@ -298,7 +300,7 @@ int qx_update_online(const qx_paths *p, int check_only)
         return -1;
     }
     qx_log("updated %s -> %s; data dir untouched", QX_VERSION_A, version);
-    return 0;
+    return QX_UPDATE_INSTALLED;
 }
 
 void qx_update_cleanup(const qx_paths *p)

@@ -1,6 +1,6 @@
 name: release
 
-# Run from the Actions tab ("Run workflow"). Builds the version in src/quartix.h,
+# Run from the Actions tab ("Run workflow"). Builds the version in src/version.h,
 # runs the tests, signs Quartix.exe with the QUARTIX_SIGNING_KEY secret and
 # publishes it as release v<version>, which `Quartix.exe update` then picks up.
 on:
@@ -17,21 +17,21 @@ jobs:
       - name: Install toolchain and Wine
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 wine64 python3-cryptography
+          sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 wine64 python3-cryptography xvfb xauth
       - name: Read version
         id: version
         run: |
-          v=$(sed -n 's/^#define QX_VERSION_A "\(.*\)"$/\1/p' src/quartix.h)
+          v=$(sed -n 's/^#define QX_VERSION_A "\(.*\)"$/\1/p' src/version.h)
           test -n "$v"
           echo "version=$v" >> "$GITHUB_OUTPUT"
           if gh release view "v$v" >/dev/null 2>&1; then
-            echo "::error::Release v$v already exists. Bump QX_VERSION_A in src/quartix.h first."
+            echo "::error::Release v$v already exists. Bump the version in src/version.h first."
             exit 1
           fi
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Build and test
-        run: make -j4 test WINE=/usr/lib/wine/wine64
+        run: xvfb-run -a make -j4 test WINE=/usr/lib/wine/wine64
       - name: Sign
         env:
           QUARTIX_SIGNING_KEY: ${{ secrets.QUARTIX_SIGNING_KEY }}

@@ -16,13 +16,19 @@ void qx_log(const char *fmt, ...)
     fflush(stdout);
 }
 
+static char last_error[512];
+
 void qx_err(const char *fmt, ...)
 {
     va_list ap;
-    fputs("error: ", stderr);
     va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
+    vsnprintf(last_error, sizeof(last_error), fmt, ap);
     va_end(ap);
-    fputc('\n', stderr);
+    fprintf(stderr, "error: %s\n", last_error);
     fflush(stderr);
+}
+
+const char *qx_last_error(void)
+{
+    return last_error;
 }

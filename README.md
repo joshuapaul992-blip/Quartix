@@ -6,7 +6,16 @@ and updates itself safely.
 
 ## Using it
 
+Double-click `Quartix.exe` to open its window. It shows the imported APK, imports a
+new one, and checks for updates every time it starts. When a newer signed release
+exists it installs it and restarts by itself.
+
+![The Quartix window](docs/window.png)
+
+Everything is also available from a command prompt:
+
 ```
+Quartix.exe help                         list the commands
 Quartix.exe info                         show install and data locations
 Quartix.exe import-apk roblox.apk        import the x86_64 Roblox APK
 Quartix.exe apk-ls roblox.apk            list what is inside an APK
@@ -45,7 +54,7 @@ One-time setup: the private signing key goes in the repository secret
 `QUARTIX_SIGNING_KEY` (Settings > Secrets and variables > Actions; paste the whole
 `.pem` file). Its public half is `keys/update_pubkey.txt`.
 
-To release: bump `QX_VERSION_A` in `src/quartix.h`, merge, then run the **release**
+To release: bump the version in `src/version.h`, merge, then run the **release**
 workflow from the Actions tab. It builds, runs the tests, signs, checks the
 signature against `keys/update_pubkey.txt` and publishes release `v<version>`.
 
@@ -61,18 +70,17 @@ build/Quartix.exe <version>`.
 Cross-compiled on Linux with mingw-w64 against `msvcrt.dll`, which XP x64 ships:
 
 ```
-sudo apt install gcc-mingw-w64-x86-64 wine64 python3-cryptography
+sudo apt install gcc-mingw-w64-x86-64 wine64 python3-cryptography xvfb
 make            # build/Quartix.exe
 make check      # verify the image targets NT 5.2 and imports nothing newer
-make test WINE=/usr/lib/wine/wine64
+xvfb-run -a make test WINE=/usr/lib/wine/wine64   # window tests need a display
 ```
 
 ## Roadmap
 
-- **Done:** XP x64 executable, install/data split, APK import, signed self-update
-  over HTTPS with downgrade protection, release workflow, CI that checks XP
-  compatibility and runs tests under Wine.
-- **Next:** a small Win32 window for importing APKs that checks for updates on start.
+- **Done:** XP x64 executable, install/data split, APK import, signed automatic
+  updates over HTTPS with downgrade protection, a native window, release workflow,
+  CI that checks XP compatibility and runs tests under Wine.
 
 ## Third-party code
 
