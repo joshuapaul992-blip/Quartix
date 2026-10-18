@@ -1,0 +1,28 @@
+/* Quartix resources: XP visual styles manifest and version information. */
+#include <winver.h>
+#include "../src/version.h"
+
+1 24 "quartix.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION QX_VERSION_MAJOR,QX_VERSION_MINOR,QX_VERSION_PATCH,0
+PRODUCTVERSION QX_VERSION_MAJOR,QX_VERSION_MINOR,QX_VERSION_PATCH,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "Quartix"
+      VALUE "ProductName", "Quartix"
+      VALUE "FileVersion", QX_VERSION_A
+      VALUE "ProductVersion", QX_VERSION_A
+      VALUE "LegalCopyright", "GPLv3"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

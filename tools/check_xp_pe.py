@@ -13,6 +13,7 @@ XP_DLLS = {
     "kernel32.dll", "msvcrt.dll", "shell32.dll", "user32.dll", "gdi32.dll",
     "advapi32.dll", "opengl32.dll", "ws2_32.dll", "winmm.dll", "dsound.dll",
     "crypt32.dll", "ole32.dll", "shlwapi.dll", "comctl32.dll", "ntdll.dll",
+    "comdlg32.dll",
 }
 
 VISTA_PLUS = {

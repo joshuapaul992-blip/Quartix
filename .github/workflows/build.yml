@@ -12,9 +12,9 @@ jobs:
       - name: Install toolchain and Wine
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 wine64 python3-cryptography
+          sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 wine64 python3-cryptography xvfb xauth
       - name: Build, check XP compatibility, run tests
-        run: make -j4 test WINE=/usr/lib/wine/wine64
+        run: xvfb-run -a make -j4 test WINE=/usr/lib/wine/wine64
       - uses: actions/upload-artifact@v4
         with:
           name: Quartix-xp-x64

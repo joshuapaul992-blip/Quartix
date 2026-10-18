@@ -5,6 +5,7 @@ endif
 ifeq ($(origin AR),default)
 AR      = x86_64-w64-mingw32-ar
 endif
+WINDRES ?= x86_64-w64-mingw32-windres
 WINE    ?= wine
 PYTHON  ?= python3
 
@@ -15,7 +16,7 @@ CFLAGS  += -std=c99 -O2 -Wall -Wextra -Werror -municode -I$(BEARSSL)/inc \
 LDFLAGS += -municode -static-libgcc \
            -Wl,--major-os-version,5,--minor-os-version,2 \
            -Wl,--major-subsystem-version,5,--minor-subsystem-version,2
-LDLIBS  += -lshell32 -lws2_32 -ladvapi32
+LDLIBS  += -lshell32 -lws2_32 -ladvapi32 -lcomctl32 -lcomdlg32 -lgdi32 -luser32
 
 # Ed25519 public key (64 hex chars) that update signatures must verify against.
 # Without one the build refuses all updates. See tools/sign_update.py.
@@ -25,7 +26,7 @@ UPDATE_BASE ?= https://github.com/joshuapaul992-blip/Quartix/releases/latest/dow
 # TESTING=1 lets the binary trust an extra CA from QUARTIX_TEST_CA; tests only.
 TESTING ?= 0
 
-SRC = src/main.c src/paths.c src/apk.c src/sha256.c src/update.c src/net.c src/log.c \
+SRC = src/main.c src/gui.c src/paths.c src/apk.c src/sha256.c src/update.c src/net.c src/log.c \
       src/gen/trust_anchors.c
 MONO = third_party/monocypher/monocypher.c third_party/monocypher/monocypher-ed25519.c
 OUT ?= build/Quartix.exe
@@ -42,11 +43,12 @@ endif
 all: $(OUT)
 
 # Rebuilt every time: the key, update URL and test flag can change between calls.
-$(OUT): $(SRC) $(MONO) src/quartix.h $(BEARSSL_LIB) FORCE
+$(OUT): $(SRC) $(MONO) src/quartix.h src/version.h res/quartix.rc res/quartix.manifest $(BEARSSL_LIB) FORCE
 	@mkdir -p $(dir $@)
 	$(CC) -std=c99 -O2 -c third_party/monocypher/monocypher.c -o $(@:.exe=)-mono.o
 	$(CC) -std=c99 -O2 -c third_party/monocypher/monocypher-ed25519.c -o $(@:.exe=)-mono-ed.o
-	$(CC) $(CFLAGS) $(DEFS) $(SRC) $(@:.exe=)-mono.o $(@:.exe=)-mono-ed.o $(BEARSSL_LIB) \
+	$(WINDRES) -I res res/quartix.rc -O coff -o $(@:.exe=)-res.o
+	$(CC) $(CFLAGS) $(DEFS) $(SRC) $(@:.exe=)-mono.o $(@:.exe=)-mono-ed.o $(@:.exe=)-res.o $(BEARSSL_LIB) \
 	      -o $@ $(LDFLAGS) $(LDLIBS)
 
 build/bearssl/%.o: $(BEARSSL)/src/%.c

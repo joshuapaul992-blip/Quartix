@@ -17,7 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define QX_VERSION_A "0.3.0"
+#include "version.h"
 #define QX_WIDEN_(x) L##x
 #define QX_WIDEN(x) QX_WIDEN_(x)
 #define QX_VERSION QX_WIDEN(QX_VERSION_A)
@@ -83,8 +83,11 @@ int qx_apk_import(const qx_paths *p, const wchar_t *apk_path, wchar_t *out_dir, 
 /* update.c */
 int qx_update_apply(const qx_paths *p, const wchar_t *staged_exe, const wchar_t *sig_path);
 int qx_update_has_key(void);
-/* Checks GitHub Releases for a newer signed build and installs it (check_only: report only). */
-int qx_update_online(const qx_paths *p, int check_only);
+/* Checks GitHub Releases for a newer signed build and installs it (check_only:
+ * report only). Returns one of the codes below, or -1 on error. new_version, if
+ * not NULL, receives the release's version when one was found. */
+enum { QX_UPDATE_NONE = 0, QX_UPDATE_CURRENT, QX_UPDATE_AVAILABLE, QX_UPDATE_INSTALLED };
+int qx_update_online(const qx_paths *p, int check_only, char new_version[32]);
 
 /* net.c */
 typedef int (*qx_net_sink)(void *ctx, const void *data, size_t n);
@@ -95,5 +98,10 @@ void qx_update_cleanup(const qx_paths *p);
 /* log.c */
 void qx_log(const char *fmt, ...);
 void qx_err(const char *fmt, ...);
+/* The most recent qx_err message, for showing in the window. */
+const char *qx_last_error(void);
+
+/* gui.c */
+int qx_gui_run(qx_paths *p);
 
 #endif

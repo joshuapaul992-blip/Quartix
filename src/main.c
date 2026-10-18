@@ -10,6 +10,7 @@ static void usage(void)
 {
     qx_log("Quartix %ls - Roblox APK manager for Windows XP x64", QX_VERSION);
     qx_log("usage:");
+    qx_log("  quartix                              open the Quartix window");
     qx_log("  quartix info                         show install and data locations");
     qx_log("  quartix import-apk <file.apk>        import the x86_64 Roblox APK");
     qx_log("  quartix apk-ls <file.apk>            list the entries of an APK");
@@ -29,15 +30,21 @@ int wmain(int argc, wchar_t **argv)
 {
     qx_paths p;
 
-    if (argc < 2) {
+    if (argc == 2 && (wcscmp(argv[1], L"help") == 0 || wcscmp(argv[1], L"--help") == 0 || wcscmp(argv[1], L"/?") == 0)) {
         usage();
-        return 2;
+        return 0;
     }
     if (qx_paths_init(&p)) {
         qx_err("cannot set up install/data directories");
+        if (argc < 2)
+            MessageBoxW(NULL, L"Quartix cannot set up its data folder.", L"Quartix", MB_ICONERROR);
         return 1;
     }
     qx_update_cleanup(&p);
+
+    /* No arguments: the window, which is what double-clicking Quartix.exe gives. */
+    if (argc < 2)
+        return qx_gui_run(&p);
 
     if (wcscmp(argv[1], L"info") == 0) {
         qx_log("version  %ls", QX_VERSION);
@@ -63,7 +70,7 @@ int wmain(int argc, wchar_t **argv)
         return 0;
     }
     if (wcscmp(argv[1], L"update") == 0 && (argc == 2 || (argc == 3 && wcscmp(argv[2], L"--check") == 0)))
-        return qx_update_online(&p, argc == 3) ? 1 : 0;
+        return qx_update_online(&p, argc == 3, NULL) < 0 ? 1 : 0;
     if (wcscmp(argv[1], L"apply-update") == 0 && argc == 4) {
         if (qx_update_apply(&p, argv[2], argv[3]))
             return 1;

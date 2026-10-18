@@ -226,6 +226,7 @@ class Server:
         import threading
 
         self.files = {}
+        self.hits = {}
         self.chunked = True
         files = self.files
         server = self
@@ -251,6 +252,7 @@ class Server:
                     self.end_headers()
                     return
                 body = files[name]
+                server.hits[name] = server.hits.get(name, 0) + 1
                 self.send_response(200)
                 if server.chunked and name.endswith(".exe"):
                     self.send_header("Transfer-Encoding", "chunked")
@@ -365,8 +367,64 @@ def test_online(tmp):
         srv.stop()
 
 
+def test_gui(tmp):
+    """Starts the window (needs a display, e.g. xvfb-run) and checks that it installs
+    an available update on its own, restarts, and does not install again."""
+    import time
+    if os.name != "nt" and not os.environ.get("DISPLAY"):
+        print("skip window tests: no DISPLAY (run under xvfb-run)")
+        return
+    tls = make_tls_material(tmp)
+    srv = Server(tls)
+    wineserver = os.path.join(os.path.dirname(WINE), "wineserver")
+    try:
+        key = os.path.join(tmp, "k.pem")
+        pub = subprocess.run([sys.executable, SIGN, "keygen", key], capture_output=True, text=True, check=True).stdout.strip()
+        exe_src = build(os.path.join(tmp, "b", "Quartix.exe"), pub,
+                        "UPDATE_BASE=https://localhost:%d/latest/download/" % srv.port, "TESTING=1")
+        install = os.path.join(tmp, "install")
+        os.makedirs(install)
+        exe = os.path.join(install, "Quartix.exe")
+        shutil.copy(exe_src, exe)
+        data = os.path.join(tmp, "data")
+        login = os.path.join(data, "app", "com.roblox.client", "shared_prefs", "session.xml")
+        os.makedirs(os.path.dirname(login))
+        open(login, "w").write("<session>keep-me</session>")
+
+        new = os.path.join(tmp, "new", "Quartix.exe")
+        os.makedirs(os.path.dirname(new))
+        shutil.copy(exe_src, new)
+        with open(new, "ab") as f:
+            f.write(b"\0" * 4096)
+        # Signed as 9.0.0 while the binary itself still says 0.4.0: the restarted
+        # window must not install it again.
+        sig = sign(key, new, "9.0.0")
+        srv.files["Quartix.exe.sig"] = open(sig, "rb").read()
+        srv.files["Quartix.exe"] = open(new, "rb").read()
+
+        env = dict(os.environ, QUARTIX_DATA_DIR=winpath(data), QUARTIX_TEST_CA=winpath(tls["ca"]), WINEDEBUG="-all")
+        cmd = ([] if os.name == "nt" else [WINE]) + [exe]
+        proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.time() + 60
+        while time.time() < deadline and sha256(exe) != sha256(new):
+            time.sleep(0.5)
+        check("window installs an available update on start", sha256(exe) == sha256(new))
+        deadline = time.time() + 30
+        while time.time() < deadline and srv.hits.get("Quartix.exe.sig", 0) < 2:
+            time.sleep(0.5)
+        time.sleep(5)
+        check("restarted window checks again", srv.hits.get("Quartix.exe.sig", 0) >= 2, str(srv.hits))
+        check("restarted window does not install again", srv.hits.get("Quartix.exe", 0) == 1, str(srv.hits))
+        check("login data survived the automatic update", open(login).read() == "<session>keep-me</session>")
+        proc.kill()
+    finally:
+        if os.path.exists(wineserver):
+            subprocess.run([wineserver, "-k"], capture_output=True)
+        srv.stop()
+
+
 def main():
-    for t in (test_apk, test_update, test_online):
+    for t in (test_apk, test_update, test_online, test_gui):
         tmp = tempfile.mkdtemp(prefix="quartix-")
         try:
             t(tmp)
