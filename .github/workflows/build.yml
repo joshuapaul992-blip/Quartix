@@ -1,0 +1,21 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows-xp-x64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain and Wine
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 wine64
+      - name: Build, check XP compatibility, run tests
+        run: make test WINE=/usr/lib/wine/wine64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Quartix-xp-x64
+          path: build/Quartix.exe
