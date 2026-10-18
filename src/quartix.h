@@ -17,7 +17,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define QX_VERSION L"0.1.0"
+#define QX_VERSION_A "0.2.0"
+#define QX_WIDEN_(x) L##x
+#define QX_WIDEN(x) QX_WIDEN_(x)
+#define QX_VERSION QX_WIDEN(QX_VERSION_A)
 #define QX_PATH_MAX 1024
 
 /* paths.c
@@ -78,7 +81,8 @@ int qx_apk_extract(const wchar_t *apk_path, const qx_apk_entry *e, const wchar_t
 int qx_apk_import(const qx_paths *p, const wchar_t *apk_path, wchar_t *out_dir, size_t cap);
 
 /* update.c */
-int qx_update_apply(const qx_paths *p, const wchar_t *staged_exe, const char *sha256_hex);
+int qx_update_apply(const qx_paths *p, const wchar_t *staged_exe, const wchar_t *sig_path);
+int qx_update_has_key(void);
 void qx_update_cleanup(const qx_paths *p);
 
 /* log.c */

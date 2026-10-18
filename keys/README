@@ -1,0 +1,2 @@
+Put the public update key (64 lowercase hex characters) in update_pubkey.txt.
+See "Signed updates" in the top-level README. Never put a private key here.

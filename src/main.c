@@ -13,7 +13,7 @@ static void usage(void)
     qx_log("  quartix info                         show install and data locations");
     qx_log("  quartix import-apk <file.apk>        import the x86_64 Roblox APK");
     qx_log("  quartix apk-ls <file.apk>            list the entries of an APK");
-    qx_log("  quartix apply-update <exe> <sha256>  replace this executable with a verified build");
+    qx_log("  quartix apply-update <exe> <exe.sig> replace this executable with a signed, newer build");
 }
 
 static int list_visit(const qx_apk_entry *e, void *ctx)
@@ -21,11 +21,6 @@ static int list_visit(const qx_apk_entry *e, void *ctx)
     (void)ctx;
     qx_log("%10llu %s %s", (unsigned long long)e->size, e->method == 0 ? "stored " : "deflate", e->name);
     return 0;
-}
-
-static int to_utf8(const wchar_t *in, char *out, int cap)
-{
-    return WideCharToMultiByte(CP_UTF8, 0, in, -1, out, cap, NULL, NULL) > 0 ? 0 : -1;
 }
 
 int wmain(int argc, wchar_t **argv)
@@ -48,6 +43,7 @@ int wmain(int argc, wchar_t **argv)
         qx_log("data     %ls", p.data_dir);
         qx_log("app data %ls", p.app_data_dir);
         qx_log("apks     %ls", p.apk_dir);
+        qx_log("updates  %s", qx_update_has_key() ? "signed updates enabled" : "disabled (no signing key in this build)");
         return 0;
     }
     if (wcscmp(argv[1], L"apk-ls") == 0 && argc == 3) {
@@ -65,12 +61,9 @@ int wmain(int argc, wchar_t **argv)
         return 0;
     }
     if (wcscmp(argv[1], L"apply-update") == 0 && argc == 4) {
-        char hex[128];
-        if (to_utf8(argv[3], hex, sizeof(hex)))
-            return 2;
-        if (qx_update_apply(&p, argv[2], hex))
+        if (qx_update_apply(&p, argv[2], argv[3]))
             return 1;
-        qx_log("updated; data dir untouched");
+        qx_log("data dir untouched");
         return 0;
     }
     usage();

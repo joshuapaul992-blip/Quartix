@@ -9,6 +9,8 @@ import tempfile
 import zipfile
 
 EXE = os.path.abspath(sys.argv[1])
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SIGN = os.path.join(ROOT, "tools", "sign_update.py")
 WINE = os.environ.get("WINE", "wine")
 failures = 0
 
@@ -77,30 +79,76 @@ def test_apk(tmp):
     check("non-zip file is rejected", r.returncode != 0, r.stdout)
 
 
-def test_update(tmp):
-    install = os.path.join(tmp, "install")
-    data = os.path.join(tmp, "data")
-    os.makedirs(install)
-    exe = os.path.join(install, "Quartix.exe")
-    shutil.copy(EXE, exe)
+def build_keyed(tmp):
+    """Builds Quartix.exe with a throwaway signing key; returns (exe, private key file)."""
+    key = os.path.join(tmp, "test.pem")
+    pub = subprocess.run([sys.executable, SIGN, "keygen", key], capture_output=True, text=True, check=True).stdout.strip()
+    out = os.path.join(tmp, "keyed", "Quartix.exe")
+    subprocess.run([os.environ.get("MAKE", "make"), "-s", "OUT=" + out, "UPDATE_PUBKEY=" + pub],
+                   cwd=ROOT, check=True, capture_output=True)
+    return out, key
 
+
+def sign(key, exe, version):
+    subprocess.run([sys.executable, SIGN, "sign", key, exe, version], check=True, capture_output=True)
+    return exe + ".sig"
+
+
+def test_update(tmp):
+    data = os.path.join(tmp, "data")
     login = os.path.join(data, "app", "com.roblox.client", "shared_prefs", "session.xml")
     os.makedirs(os.path.dirname(login))
     open(login, "w").write("<session>keep-me</session>")
 
-    staged = os.path.join(tmp, "Quartix.new.exe")
+    r = run(EXE, "info", data_dir=data)
+    check("unkeyed build reports updates disabled", "disabled" in r.stdout, r.stdout)
+    staged = os.path.join(tmp, "unkeyed-new.exe")
     shutil.copy(EXE, staged)
-    with open(staged, "ab") as f:
-        f.write(b"\0" * 512)  # a different, still valid image
+    open(staged + ".sig", "w").write("quartix-update-v1\n")
+    r = run(EXE, "apply-update", winpath(staged), winpath(staged + ".sig"), data_dir=data)
+    check("unkeyed build refuses updates", r.returncode != 0 and "no update signing key" in r.stderr, r.stderr)
+
+    keyed, key = build_keyed(tmp)
+    install = os.path.join(tmp, "install")
+    os.makedirs(install)
+    exe = os.path.join(install, "Quartix.exe")
+    shutil.copy(keyed, exe)
     before = sha256(exe)
 
-    r = run(exe, "apply-update", winpath(staged), "0" * 64, data_dir=data)
-    check("update with wrong hash is refused", r.returncode != 0 and "mismatch" in r.stderr, r.stderr)
-    check("refused update leaves the executable alone", sha256(exe) == before)
+    staged = os.path.join(tmp, "new", "Quartix.exe")
+    os.makedirs(os.path.dirname(staged))
+    shutil.copy(keyed, staged)
+    with open(staged, "ab") as f:
+        f.write(b"\0" * 512)  # a different, still valid image
 
+    def apply(sig):
+        return run(exe, "apply-update", winpath(staged), winpath(sig), data_dir=data)
+
+    other_key = os.path.join(tmp, "other.pem")
+    subprocess.run([sys.executable, SIGN, "keygen", other_key], check=True, capture_output=True)
+    r = apply(sign(other_key, staged, "9.0.0"))
+    check("update signed by another key is refused", r.returncode != 0 and "not valid" in r.stderr, r.stderr)
+
+    sig = sign(key, staged, "9.0.0")
+    body = open(sig).read()
+    open(sig, "w").write(body.replace("version=9.0.0", "version=9.0.1"))
+    r = apply(sig)
+    check("tampered signature file is refused", r.returncode != 0 and "not valid" in r.stderr, r.stderr)
+
+    r = apply(sign(key, staged, "0.1.0"))
+    check("older version is refused", r.returncode != 0 and "not newer" in r.stderr, r.stderr)
+
+    good = sign(key, staged, "9.0.0")
+    with open(staged, "ab") as f:
+        f.write(b"x")
+    r = apply(good)
+    check("file changed after signing is refused", r.returncode != 0 and "does not match" in r.stderr, r.stderr)
+    check("refused updates leave the executable alone", sha256(exe) == before)
+
+    good = sign(key, staged, "9.0.0")
     want = sha256(staged)
-    r = run(exe, "apply-update", winpath(staged), want, data_dir=data)
-    check("verified update applies", r.returncode == 0, r.stdout + r.stderr)
+    r = apply(good)
+    check("signed, newer update applies", r.returncode == 0, r.stdout + r.stderr)
     check("executable was replaced", sha256(exe) == want)
     check("login data survived the update", open(login).read() == "<session>keep-me</session>")
 
