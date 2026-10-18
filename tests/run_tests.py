@@ -21,9 +21,9 @@ def winpath(p):
     return "Z:" + p.replace("/", "\\")
 
 
-def run(exe, *args, data_dir):
+def run(exe, *args, data_dir, env=None):
     cmd = ([] if os.name == "nt" else [WINE]) + [exe] + list(args)
-    env = dict(os.environ, QUARTIX_DATA_DIR=winpath(data_dir), WINEDEBUG="-all")
+    env = dict(os.environ, QUARTIX_DATA_DIR=winpath(data_dir), WINEDEBUG="-all", **(env or {}))
     return subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120)
 
 
@@ -79,8 +79,8 @@ def test_apk(tmp):
     check("non-zip file is rejected", r.returncode != 0, r.stdout)
 
 
-def build(out, pubkey):
-    subprocess.run([os.environ.get("MAKE", "make"), "-s", "OUT=" + out, "UPDATE_PUBKEY=" + pubkey],
+def build(out, pubkey, *extra):
+    subprocess.run([os.environ.get("MAKE", "make"), "-s", "OUT=" + out, "UPDATE_PUBKEY=" + pubkey] + list(extra),
                    cwd=ROOT, check=True, capture_output=True)
     return out
 
@@ -162,8 +162,211 @@ def test_update(tmp):
     check("login data survived the restart", open(login).read() == "<session>keep-me</session>")
 
 
+def make_tls_material(tmp):
+    """Writes a test CA, a server cert for localhost signed by it, and a second,
+    untrusted CA's localhost cert. Returns their paths."""
+    import datetime
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    def name(cn):
+        return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+
+    def make_ca(cn):
+        key = ec.generate_private_key(ec.SECP256R1())
+        cert = (x509.CertificateBuilder().subject_name(name(cn)).issuer_name(name(cn))
+                .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(days=1))
+                .not_valid_after(now + datetime.timedelta(days=30))
+                .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+                .add_extension(x509.KeyUsage(False, False, False, False, False, True, True, False, False), critical=True)
+                .sign(key, hashes.SHA256()))
+        return key, cert
+
+    def make_leaf(ca_key, ca_cert, host, prefix):
+        key = ec.generate_private_key(ec.SECP256R1())
+        cert = (x509.CertificateBuilder().subject_name(name(host)).issuer_name(ca_cert.subject)
+                .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                .not_valid_before(now - datetime.timedelta(days=1))
+                .not_valid_after(now + datetime.timedelta(days=30))
+                .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+                .add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+                .sign(ca_key, hashes.SHA256()))
+        cert_path, key_path = os.path.join(tmp, prefix + ".crt"), os.path.join(tmp, prefix + ".key")
+        open(cert_path, "wb").write(cert.public_bytes(serialization.Encoding.PEM) +
+                                    ca_cert.public_bytes(serialization.Encoding.PEM))
+        open(key_path, "wb").write(key.private_bytes(serialization.Encoding.PEM,
+                                                     serialization.PrivateFormat.PKCS8,
+                                                     serialization.NoEncryption()))
+        return cert_path, key_path
+
+    ca_key, ca_cert = make_ca("Quartix Test CA")
+    ca_path = os.path.join(tmp, "ca.pem")
+    open(ca_path, "wb").write(ca_cert.public_bytes(serialization.Encoding.PEM))
+    rogue_key, rogue_cert = make_ca("Untrusted CA")
+    return {
+        "ca": ca_path,
+        "good": make_leaf(ca_key, ca_cert, "localhost", "good"),
+        "wrong_host": make_leaf(ca_key, ca_cert, "example.invalid", "wrong"),
+        "untrusted": make_leaf(rogue_key, rogue_cert, "localhost", "rogue"),
+    }
+
+
+class Server:
+    """Local HTTPS server mimicking GitHub's latest-release download redirects."""
+
+    def __init__(self, tls):
+        import http.server
+        import socket
+        import ssl
+        import threading
+
+        self.files = {}
+        self.chunked = True
+        files = self.files
+        server = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                if self.path.startswith("/latest/download/"):
+                    name = self.path.rsplit("/", 1)[1]
+                    self.send_response(302)
+                    self.send_header("Location", "/assets/" + name)  # relative, like a CDN hop
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                name = self.path.rsplit("/", 1)[1]
+                if not self.path.startswith("/assets/") or name not in files:
+                    self.send_response(404)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                body = files[name]
+                self.send_response(200)
+                if server.chunked and name.endswith(".exe"):
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    for i in range(0, len(body), 7000):
+                        part = body[i:i + 7000]
+                        self.wfile.write(b"%x\r\n" % len(part) + part + b"\r\n")
+                    self.wfile.write(b"0\r\n\r\n")
+                else:
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        self.port = s.getsockname()[1]
+        s.close()
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), Handler)
+        self.ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        self.ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        self.ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+        self.use(tls["good"])
+        self.httpd.socket = self.ctx.wrap_socket(self.httpd.socket, server_side=True)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def use(self, cert_key):
+        self.ctx.load_cert_chain(*cert_key)
+
+    def stop(self):
+        self.httpd.shutdown()
+
+
+def test_online(tmp):
+    tls = make_tls_material(tmp)
+    srv = Server(tls)
+    try:
+        key = os.path.join(tmp, "k.pem")
+        pub = subprocess.run([sys.executable, SIGN, "keygen", key], capture_output=True, text=True, check=True).stdout.strip()
+        base = "UPDATE_BASE=https://localhost:%d/latest/download/" % srv.port
+        exe_src = build(os.path.join(tmp, "b", "Quartix.exe"), pub, base, "TESTING=1")
+        install = os.path.join(tmp, "install")
+        os.makedirs(install)
+        exe = os.path.join(install, "Quartix.exe")
+        shutil.copy(exe_src, exe)
+        before = sha256(exe)
+        data = os.path.join(tmp, "data")
+        login = os.path.join(data, "app", "com.roblox.client", "shared_prefs", "session.xml")
+        os.makedirs(os.path.dirname(login))
+        open(login, "w").write("<session>keep-me</session>")
+        env = {"QUARTIX_TEST_CA": winpath(tls["ca"])}
+
+        def update(*args, e=env):
+            return run(exe, "update", *args, data_dir=data, env=e)
+
+        r = update()
+        check("no published release is reported, not an error", r.returncode == 0 and "no release" in r.stdout, r.stdout + r.stderr)
+
+        new = os.path.join(tmp, "new", "Quartix.exe")
+        os.makedirs(os.path.dirname(new))
+        shutil.copy(exe_src, new)
+        with open(new, "ab") as f:
+            f.write(os.urandom(300000))  # different image, big enough for many chunks
+
+        def publish(version, body=None, signer=key):
+            sig = sign(signer, new, version)
+            srv.files["Quartix.exe.sig"] = open(sig, "rb").read()
+            srv.files["Quartix.exe"] = body if body is not None else open(new, "rb").read()
+
+        publish("0.3.0")
+        r = update()
+        check("same version reports up to date", r.returncode == 0 and "up to date" in r.stdout, r.stdout + r.stderr)
+
+        publish("9.0.0")
+        r = update("--check")
+        check("--check reports the newer version", r.returncode == 0 and "9.0.0" in r.stdout, r.stdout + r.stderr)
+        check("--check does not install", sha256(exe) == before)
+
+        r = update(e={})
+        check("server outside the trusted CAs is refused", r.returncode != 0 and "certificate" in r.stderr, r.stderr)
+
+        srv.use(tls["untrusted"])
+        r = update()
+        check("certificate from an untrusted CA is refused", r.returncode != 0 and "certificate" in r.stderr, r.stderr)
+        srv.use(tls["wrong_host"])
+        r = update()
+        check("certificate for another host name is refused", r.returncode != 0 and "certificate" in r.stderr, r.stderr)
+        srv.use(tls["good"])
+
+        other = os.path.join(tmp, "other.pem")
+        subprocess.run([sys.executable, SIGN, "keygen", other], check=True, capture_output=True)
+        publish("9.0.0", signer=other)
+        r = update()
+        check("release signed by another key is refused", r.returncode != 0 and "not valid" in r.stderr, r.stderr)
+
+        publish("9.0.0", body=open(new, "rb").read() + b"tampered")
+        r = update()
+        check("tampered download is refused", r.returncode != 0 and "does not match" in r.stderr, r.stderr)
+        check("refused updates leave the executable alone", sha256(exe) == before)
+        check("refused download is cleaned up", not os.path.exists(exe + ".download"))
+
+        publish("9.0.0")
+        r = update()
+        check("signed release downloads (redirect, chunked) and installs", r.returncode == 0, r.stdout + r.stderr)
+        check("executable now matches the release", sha256(exe) == sha256(new))
+        check("login data survived the online update", open(login).read() == "<session>keep-me</session>")
+
+        srv.chunked = False
+        shutil.copy(exe_src, exe)
+        r = update()
+        check("Content-Length download also installs", r.returncode == 0 and sha256(exe) == sha256(new), r.stdout + r.stderr)
+    finally:
+        srv.stop()
+
+
 def main():
-    for t in (test_apk, test_update):
+    for t in (test_apk, test_update, test_online):
         tmp = tempfile.mkdtemp(prefix="quartix-")
         try:
             t(tmp)

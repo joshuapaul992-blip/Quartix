@@ -10,7 +10,9 @@ and updates itself safely.
 Quartix.exe info                         show install and data locations
 Quartix.exe import-apk roblox.apk        import the x86_64 Roblox APK
 Quartix.exe apk-ls roblox.apk            list what is inside an APK
-Quartix.exe apply-update new.exe new.exe.sig  install a signed, newer Quartix.exe
+Quartix.exe update                       download and install the latest signed release
+Quartix.exe update --check               only say whether an update is available
+Quartix.exe apply-update new.exe new.exe.sig  install a signed, newer build from local files
 ```
 
 Quartix does not ship or download the Roblox APK; you provide it.
@@ -28,27 +30,31 @@ An update only swaps `Quartix.exe` (rename aside, move new one in, roll back on
 failure). The data directory can be moved with the `QUARTIX_DATA_DIR` environment
 variable.
 
-### Signed updates
+### Updates
 
-An update is installed only if its `.sig` file is signed by the project's Ed25519
-key, the file matches the signed SHA-256, and its version is newer than the running
-one (no downgrades). A build made without a key refuses all updates.
+`Quartix.exe update` fetches `Quartix.exe.sig` from the latest GitHub release over
+TLS 1.2 (bundled BearSSL, since XP x64 has none; certificates are checked against
+the bundled Mozilla CA list and the host name). It installs the release only if the
+signature is made by the project's Ed25519 key, the download matches the signed
+SHA-256, and the version is newer than the running one, so downgrades are refused.
+A build made without a key refuses all updates.
 
-One-time setup (keep the private key off GitHub; `*.pem` is git-ignored):
+### Releasing
 
-```
-pip install cryptography
-python3 tools/sign_update.py keygen ~/quartix-update.pem > keys/update_pubkey.txt
-git add keys/update_pubkey.txt
-```
+One-time setup: the private signing key goes in the repository secret
+`QUARTIX_SIGNING_KEY` (Settings > Secrets and variables > Actions; paste the whole
+`.pem` file). Its public half is `keys/update_pubkey.txt`.
 
-Releasing: bump `QX_VERSION_A` in `src/quartix.h`, build, then
+To release: bump `QX_VERSION_A` in `src/quartix.h`, merge, then run the **release**
+workflow from the Actions tab. It builds, runs the tests, signs, checks the
+signature against `keys/update_pubkey.txt` and publishes release `v<version>`.
 
-```
-python3 tools/sign_update.py sign ~/quartix-update.pem build/Quartix.exe 0.3.0
-```
+To change keys: commit the new public key, then sign that one release with the
+old key. Installed copies trust it because the old key signed it, and trust only
+the new key from then on.
 
-and ship `Quartix.exe` with `Quartix.exe.sig`.
+Manual signing still works: `python3 tools/sign_update.py sign <key.pem>
+build/Quartix.exe <version>`.
 
 ## Building
 
@@ -64,15 +70,17 @@ make test WINE=/usr/lib/wine/wine64
 ## Roadmap
 
 - **Done:** XP x64 executable, install/data split, APK import, signed self-update
-  with downgrade protection, CI that checks XP compatibility and runs tests under Wine.
-- **Next:** fetch updates over the network (XP x64 has no TLS 1.2, so this needs a
-  bundled TLS library).
-- **Later:** a small Win32 window for importing APKs and applying updates.
+  over HTTPS with downgrade protection, release workflow, CI that checks XP
+  compatibility and runs tests under Wine.
+- **Next:** a small Win32 window for importing APKs that checks for updates on start.
 
 ## Third-party code
 
 [Monocypher](https://monocypher.org/) 4.0.2 (BSD-2-Clause / CC0) for Ed25519,
 vendored unmodified in `third_party/monocypher`.
+[BearSSL](https://bearssl.org/) 0.6 (MIT) for TLS, vendored unmodified in
+`third_party/bearssl`. CA list generated from the Mozilla bundle by
+`tools/gen_trust_anchors.sh`.
 
 ## License
 

@@ -13,7 +13,9 @@ static void usage(void)
     qx_log("  quartix info                         show install and data locations");
     qx_log("  quartix import-apk <file.apk>        import the x86_64 Roblox APK");
     qx_log("  quartix apk-ls <file.apk>            list the entries of an APK");
-    qx_log("  quartix apply-update <exe> <exe.sig> replace this executable with a signed, newer build");
+    qx_log("  quartix update                       download and install the latest signed release");
+    qx_log("  quartix update --check               only report whether an update is available");
+    qx_log("  quartix apply-update <exe> <exe.sig> install a signed, newer build from local files");
 }
 
 static int list_visit(const qx_apk_entry *e, void *ctx)
@@ -60,6 +62,8 @@ int wmain(int argc, wchar_t **argv)
         qx_log("imported to %ls", dir);
         return 0;
     }
+    if (wcscmp(argv[1], L"update") == 0 && (argc == 2 || (argc == 3 && wcscmp(argv[2], L"--check") == 0)))
+        return qx_update_online(&p, argc == 3) ? 1 : 0;
     if (wcscmp(argv[1], L"apply-update") == 0 && argc == 4) {
         if (qx_update_apply(&p, argv[2], argv[3]))
             return 1;

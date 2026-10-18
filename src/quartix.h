@@ -17,7 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define QX_VERSION_A "0.2.0"
+#define QX_VERSION_A "0.3.0"
 #define QX_WIDEN_(x) L##x
 #define QX_WIDEN(x) QX_WIDEN_(x)
 #define QX_VERSION QX_WIDEN(QX_VERSION_A)
@@ -83,6 +83,13 @@ int qx_apk_import(const qx_paths *p, const wchar_t *apk_path, wchar_t *out_dir, 
 /* update.c */
 int qx_update_apply(const qx_paths *p, const wchar_t *staged_exe, const wchar_t *sig_path);
 int qx_update_has_key(void);
+/* Checks GitHub Releases for a newer signed build and installs it (check_only: report only). */
+int qx_update_online(const qx_paths *p, int check_only);
+
+/* net.c */
+typedef int (*qx_net_sink)(void *ctx, const void *data, size_t n);
+/* HTTPS GET following redirects. 0 on success, 1 on HTTP 404, -1 on error. */
+int qx_https_get(const char *url, qx_net_sink sink, void *ctx, uint64_t max_bytes);
 void qx_update_cleanup(const qx_paths *p);
 
 /* log.c */
