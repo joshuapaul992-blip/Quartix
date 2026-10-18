@@ -29,6 +29,9 @@ TESTING ?= 0
 SRC = src/main.c src/gui.c src/paths.c src/apk.c src/sha256.c src/update.c src/net.c src/log.c \
       src/gen/trust_anchors.c
 MONO = third_party/monocypher/monocypher.c third_party/monocypher/monocypher-ed25519.c
+# Only the inflate half of miniz (tinfl) is used, for deflated entries in APKs and bundles.
+MINIZ = third_party/miniz/miniz.c
+MINIZ_DEFS = -DMINIZ_NO_STDIO -DMINIZ_NO_ARCHIVE_APIS -DMINIZ_NO_TIME -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES
 OUT ?= build/Quartix.exe
 
 BEARSSL_SRC = $(shell find $(BEARSSL)/src -name '*.c')
@@ -43,12 +46,13 @@ endif
 all: $(OUT)
 
 # Rebuilt every time: the key, update URL and test flag can change between calls.
-$(OUT): $(SRC) $(MONO) src/quartix.h src/version.h res/quartix.rc res/quartix.manifest $(BEARSSL_LIB) FORCE
+$(OUT): $(SRC) $(MONO) $(MINIZ) src/quartix.h src/version.h res/quartix.rc res/quartix.manifest $(BEARSSL_LIB) FORCE
 	@mkdir -p $(dir $@)
 	$(CC) -std=c99 -O2 -c third_party/monocypher/monocypher.c -o $(@:.exe=)-mono.o
 	$(CC) -std=c99 -O2 -c third_party/monocypher/monocypher-ed25519.c -o $(@:.exe=)-mono-ed.o
+	$(CC) -std=c99 -O2 $(MINIZ_DEFS) -c $(MINIZ) -o $(@:.exe=)-miniz.o
 	$(WINDRES) -I res res/quartix.rc -O coff -o $(@:.exe=)-res.o
-	$(CC) $(CFLAGS) $(DEFS) $(SRC) $(@:.exe=)-mono.o $(@:.exe=)-mono-ed.o $(@:.exe=)-res.o $(BEARSSL_LIB) \
+	$(CC) $(CFLAGS) $(DEFS) $(SRC) $(@:.exe=)-mono.o $(@:.exe=)-mono-ed.o $(@:.exe=)-miniz.o $(@:.exe=)-res.o $(BEARSSL_LIB) \
 	      -o $@ $(LDFLAGS) $(LDLIBS)
 
 build/bearssl/%.o: $(BEARSSL)/src/%.c

@@ -12,7 +12,7 @@ static void usage(void)
     qx_log("usage:");
     qx_log("  quartix                              open the Quartix window");
     qx_log("  quartix info                         show install and data locations");
-    qx_log("  quartix import-apk <file.apk>        import the x86_64 Roblox APK");
+    qx_log("  quartix import-apk <file>             import the x86_64 Roblox APK or bundle (.apks, .xapk, .apkm)");
     qx_log("  quartix apk-ls <file.apk>            list the entries of an APK");
     qx_log("  quartix update                       download and install the latest signed release");
     qx_log("  quartix update --check               only report whether an update is available");

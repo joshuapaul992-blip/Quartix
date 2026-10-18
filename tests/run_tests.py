@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end tests for Quartix.exe, run under Wine (or natively on Windows)."""
 import hashlib
+import io
 import os
 import shutil
 import subprocess
@@ -65,7 +66,19 @@ def test_apk(tmp):
     deflated = os.path.join(tmp, "deflated.apk")
     make_apk(deflated, lib, zipfile.ZIP_DEFLATED)
     r = run(EXE, "import-apk", winpath(deflated), data_dir=data)
-    check("deflated library is rejected, not guessed", r.returncode != 0 and "compressed" in r.stderr, r.stderr)
+    cur = open(os.path.join(data, "apk", "current")).read().strip()
+    out = os.path.join(data, "apk", cur, "lib", "x86_64", "libroblox.so")
+    check("deflated library is inflated", r.returncode == 0 and open(out, "rb").read() == lib, r.stderr)
+
+    corrupt = os.path.join(tmp, "corrupt.apk")
+    raw = bytearray(open(deflated, "rb").read())
+    at = raw.index(b"lib/x86_64/libroblox.so") + len("lib/x86_64/libroblox.so") + 2000
+    raw[at] ^= 0xFF
+    open(corrupt, "wb").write(raw)
+    r = run(EXE, "import-apk", winpath(corrupt), data_dir=data)
+    check("corrupt deflated library is rejected", r.returncode != 0 and "corrupt" in r.stderr, r.stderr)
+    check("failed import leaves current alone", open(os.path.join(data, "apk", "current")).read().strip() == cur)
+    check("failed import removes its folder", not os.path.exists(os.path.join(data, "apk", sha256(corrupt)[:16])))
 
     noarch = os.path.join(tmp, "arm.apk")
     with zipfile.ZipFile(noarch, "w") as z:
@@ -73,10 +86,74 @@ def test_apk(tmp):
     r = run(EXE, "import-apk", winpath(noarch), data_dir=data)
     check("APK without x86_64 library is rejected", r.returncode != 0 and "x86_64" in r.stderr, r.stderr)
 
+    test_bundles(tmp, data, lib)
+
     junk = os.path.join(tmp, "junk.apk")
     open(junk, "wb").write(os.urandom(5000))
     r = run(EXE, "import-apk", winpath(junk), data_dir=data)
     check("non-zip file is rejected", r.returncode != 0, r.stdout)
+
+
+def zip_bytes(entries, compress=zipfile.ZIP_DEFLATED):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, data in entries:
+            z.writestr(name, data, compress)
+    return buf.getvalue()
+
+
+def test_bundles(tmp, data, lib):
+    base = zip_bytes([("AndroidManifest.xml", b"\0" * 64), ("classes.dex", b"dex\n035\0" + b"x" * 1000)])
+    split = zip_bytes([("AndroidManifest.xml", b"\1" * 64), ("lib/x86_64/libroblox.so", lib)], zipfile.ZIP_STORED)
+    arm = zip_bytes([("lib/arm64-v8a/libroblox.so", b"\x7fELF")])
+
+    def imported(path):
+        r = run(EXE, "import-apk", winpath(path), data_dir=data)
+        cur = open(os.path.join(data, "apk", "current")).read().strip()
+        return r, os.path.join(data, "apk", cur)
+
+    # .apks (SAI / bundletool): splits/ folder, outer zip deflated.
+    apks = os.path.join(tmp, "roblox.apks")
+    open(apks, "wb").write(zip_bytes([("toc.pb", b"x"), ("splits/base-master.apk", base),
+                                      ("splits/base-x86_64.apk", split), ("splits/base-arm64_v8a.apk", arm),
+                                      ("standalones/standalone-x86_64.apk", b"ignored")]))
+    r, d = imported(apks)
+    check(".apks bundle imports", r.returncode == 0, r.stdout + r.stderr)
+    check(".apks base becomes base.apk", open(os.path.join(d, "base.apk"), "rb").read() == base)
+    check(".apks splits are kept", open(os.path.join(d, "base-x86_64.apk"), "rb").read() == split)
+    check(".apks library comes from the x86_64 split",
+          open(os.path.join(d, "lib", "x86_64", "libroblox.so"), "rb").read() == lib)
+    check(".apks standalones are skipped", not os.path.exists(os.path.join(d, "standalone-x86_64.apk")))
+    check(".apks current points at the bundle's hash", os.path.basename(d) == sha256(apks)[:16])
+
+    # .xapk (APKPure): APKs at the top level next to a manifest.
+    xapk = os.path.join(tmp, "roblox.xapk")
+    open(xapk, "wb").write(zip_bytes([("manifest.json", b"{}"), ("icon.png", b"png"),
+                                      ("com.roblox.client.apk", base), ("config.x86_64.apk", split)],
+                                     zipfile.ZIP_STORED))
+    r, d = imported(xapk)
+    check(".xapk bundle imports", r.returncode == 0, r.stdout + r.stderr)
+    check(".xapk base becomes base.apk", open(os.path.join(d, "base.apk"), "rb").read() == base)
+    check(".xapk library extracted", open(os.path.join(d, "lib", "x86_64", "libroblox.so"), "rb").read() == lib)
+    check(".xapk non-APK files are not copied", not os.path.exists(os.path.join(d, "manifest.json")))
+
+    # Names that try to climb out of the version folder are skipped.
+    evil = os.path.join(tmp, "evil.apks")
+    open(evil, "wb").write(zip_bytes([("base.apk", base), ("../../escape.apk", split), ("..\\up.apk", split),
+                                      ("x/config.x86_64.apk", split)]))
+    r, d = imported(evil)
+    check("bundle with hostile names still imports", r.returncode == 0, r.stdout + r.stderr)
+    check("hostile names are not written outside", not os.path.exists(os.path.join(data, "escape.apk")) and
+          not os.path.exists(os.path.join(data, "apk", "escape.apk")) and
+          not os.path.exists(os.path.join(data, "apk", "up.apk")))
+
+    before = open(os.path.join(data, "apk", "current")).read()
+    noarch = os.path.join(tmp, "arm.apks")
+    open(noarch, "wb").write(zip_bytes([("splits/base-master.apk", base), ("splits/base-arm64_v8a.apk", arm)]))
+    r = run(EXE, "import-apk", winpath(noarch), data_dir=data)
+    check("bundle without x86_64 split is rejected", r.returncode != 0 and "x86_64 split" in r.stderr, r.stderr)
+    check("rejected bundle leaves current alone", open(os.path.join(data, "apk", "current")).read() == before)
+    check("rejected bundle leaves no folder", not os.path.exists(os.path.join(data, "apk", sha256(noarch)[:16])))
 
 
 def build(out, pubkey, *extra):
@@ -396,7 +473,7 @@ def test_gui(tmp):
         shutil.copy(exe_src, new)
         with open(new, "ab") as f:
             f.write(b"\0" * 4096)
-        # Signed as 9.0.0 while the binary itself still says 0.4.0: the restarted
+        # Signed as 9.0.0 while the binary itself still says the current version: the restarted
         # window must not install it again.
         sig = sign(key, new, "9.0.0")
         srv.files["Quartix.exe.sig"] = open(sig, "rb").read()
