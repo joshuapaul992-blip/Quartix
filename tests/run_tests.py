@@ -79,14 +79,17 @@ def test_apk(tmp):
     check("non-zip file is rejected", r.returncode != 0, r.stdout)
 
 
+def build(out, pubkey):
+    subprocess.run([os.environ.get("MAKE", "make"), "-s", "OUT=" + out, "UPDATE_PUBKEY=" + pubkey],
+                   cwd=ROOT, check=True, capture_output=True)
+    return out
+
+
 def build_keyed(tmp):
     """Builds Quartix.exe with a throwaway signing key; returns (exe, private key file)."""
     key = os.path.join(tmp, "test.pem")
     pub = subprocess.run([sys.executable, SIGN, "keygen", key], capture_output=True, text=True, check=True).stdout.strip()
-    out = os.path.join(tmp, "keyed", "Quartix.exe")
-    subprocess.run([os.environ.get("MAKE", "make"), "-s", "OUT=" + out, "UPDATE_PUBKEY=" + pub],
-                   cwd=ROOT, check=True, capture_output=True)
-    return out, key
+    return build(os.path.join(tmp, "keyed", "Quartix.exe"), pub), key
 
 
 def sign(key, exe, version):
@@ -100,12 +103,13 @@ def test_update(tmp):
     os.makedirs(os.path.dirname(login))
     open(login, "w").write("<session>keep-me</session>")
 
-    r = run(EXE, "info", data_dir=data)
+    unkeyed = build(os.path.join(tmp, "unkeyed", "Quartix.exe"), "")
+    r = run(unkeyed, "info", data_dir=data)
     check("unkeyed build reports updates disabled", "disabled" in r.stdout, r.stdout)
     staged = os.path.join(tmp, "unkeyed-new.exe")
-    shutil.copy(EXE, staged)
+    shutil.copy(unkeyed, staged)
     open(staged + ".sig", "w").write("quartix-update-v1\n")
-    r = run(EXE, "apply-update", winpath(staged), winpath(staged + ".sig"), data_dir=data)
+    r = run(unkeyed, "apply-update", winpath(staged), winpath(staged + ".sig"), data_dir=data)
     check("unkeyed build refuses updates", r.returncode != 0 and "no update signing key" in r.stderr, r.stderr)
 
     keyed, key = build_keyed(tmp)
