@@ -64,15 +64,22 @@ real hardware before claiming it works.
      surface (`ALooper`, `AAssetManager`, `ANativeWindow`, `AInputQueue`, …).
    - It is linked `BIND_NOW` with 2968 `INIT_ARRAY` initializers that must run
      after relocation, once the shim can satisfy the symbols they touch.
-3. **Linux syscall + bionic shim** — *the core, next.* Real, **SysV-ABI**
-   implementations of the libc/libm/libdl/liblog symbols the engine imports
-   (`pthread_*`, `malloc`, string/stdio, math, `dlsym`, `__android_log_*`),
-   plus a handler for the Linux x86-64 syscalls bionic makes underneath
-   (memory, futex, files, time). Every such function must be
-   `__attribute__((sysv_abi))`, because the Android code uses the System V
-   calling convention and Windows uses the Microsoft one — the one thing
-   Linux/FreeBSD give Sober/Mocktail for free. As symbols become real,
+3. **Linux syscall + bionic shim** — *in progress (`src/shim.c`).* Real,
+   **SysV-ABI** implementations of the symbols the engine imports. Every such
+   function is `__attribute__((sysv_abi))`, because the Android code uses the
+   System V calling convention and Windows uses the Microsoft one — the one
+   thing Linux/FreeBSD give Sober/Mocktail for free. As symbols become real,
    `qx_shim_resolve` returns them and the loader's resolved count rises.
+   - *Done:* the pure libc (memory/string, `qsort`/`bsearch` with a SysV-ABI
+     comparator, `__errno`, `abort`, `exit`, `getenv`), libm math, non-variadic
+     liblog, and libdl (`dlsym` routes back through the resolver). Against the
+     real `libroblox.so` this resolves **62 of 637** symbolic relocations.
+     (Note: Roblox bundles its own allocator, so `malloc`/`free` are not
+     imported.)
+   - *Next:* pthreads (44 symbols) onto Win32 threads/CVs/TLS, the variadic
+     `snprintf`/`__android_log_print` family (needs a SysV va_list path), and a
+     handler for the Linux x86-64 syscalls bionic makes underneath (memory,
+     futex, files, time).
 4. **Synthetic JNI / Android framework** — a minimal JNI environment (in the
    spirit of `libjnivm`) so the engine's calls into "Java" for device info,
    networking, windowing and lifecycle resolve to host implementations.
