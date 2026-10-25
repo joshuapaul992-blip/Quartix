@@ -26,7 +26,7 @@ UPDATE_BASE ?= https://github.com/joshuapaul992-blip/Quartix/releases/latest/dow
 # TESTING=1 lets the binary trust an extra CA from QUARTIX_TEST_CA; tests only.
 TESTING ?= 0
 
-SRC = src/main.c src/gui.c src/paths.c src/apk.c src/elf.c src/runtime.c src/sha256.c src/update.c src/net.c src/log.c \
+SRC = src/main.c src/gui.c src/paths.c src/apk.c src/elf.c src/loader.c src/runtime.c src/sha256.c src/update.c src/net.c src/log.c \
       src/gen/trust_anchors.c
 MONO = third_party/monocypher/monocypher.c third_party/monocypher/monocypher-ed25519.c
 # Only the inflate half of miniz (tinfl) is used, for deflated entries in APKs and bundles.

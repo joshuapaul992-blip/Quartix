@@ -184,6 +184,7 @@ def test_runtime(tmp):
     r = run(EXE, "run", data_dir=data)
     check("run reports the core is unfinished (exit 2)",
           r.returncode == 2 and "does not start yet" in r.stdout, str(r.returncode) + r.stdout + r.stderr)
+    check("run maps the library's load segment", "mapped 1 load segment" in r.stdout, r.stdout)
     check("run promises login data is preserved", "preserved" in r.stdout, r.stdout)
 
     bad = os.path.join(tmp, "notelf.apk")

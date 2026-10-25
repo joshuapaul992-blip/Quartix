@@ -40,9 +40,12 @@ real hardware before claiming it works.
    resolves `apk\current`, parses the ELF64 header, program headers and dynamic
    section, and reports the load segments, needed libraries, soname and TLS. See
    `src/elf.c`.
-2. **ELF loader** — *in progress.* Map the `PT_LOAD` segments into memory with
-   the right protections, process the dynamic relocations (`R_X86_64_RELATIVE`,
-   `GLOB_DAT`, `JUMP_SLOT`), and resolve symbols against the shim below.
+2. **ELF loader** — *mapping + relative relocations done (`src/loader.c`).*
+   `quartix run` reserves one span, copies the `PT_LOAD` segments to a load bias,
+   applies the `R_X86_64_RELATIVE` relocations (verified against `readelf`), and
+   sets each segment's final page protection. The symbolic relocations
+   (`GLOB_DAT`, `JUMP_SLOT`, 64-bit) are counted and left for phase 3, which
+   resolves them; nothing transfers control to the mapped code yet.
 3. **Linux syscall + bionic shim** — *the core.* A user-space handler for the
    Linux x86-64 syscalls the engine and bionic use (memory, threads/futex,
    files, sockets, time, `ioctl`), mapped onto Win32/NT, plus bionic libc

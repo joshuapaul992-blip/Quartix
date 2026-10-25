@@ -105,6 +105,22 @@ typedef struct qx_elf_info {
  * -1 only when the file cannot be read at all. */
 int qx_elf_read(const wchar_t *path, qx_elf_info *out);
 
+/* loader.c - map the ELF into memory and apply symbol-free relocations. Running
+ * the mapped code needs the syscall/bionic shim, which is a later phase. */
+typedef struct qx_elf_image {
+    uint8_t *base;             /* reserved span (VirtualAlloc), or NULL */
+    uint64_t span;             /* bytes reserved */
+    uint64_t bias;            /* base - lowest page-aligned p_vaddr */
+    uint64_t entry;            /* absolute entry point (bias + e_entry) */
+    unsigned load_segments;
+    unsigned relative_relocs;  /* R_X86_64_RELATIVE applied */
+    unsigned symbolic_relocs;  /* GLOB_DAT/JUMP_SLOT/64 awaiting the shim */
+    unsigned other_relocs;
+} qx_elf_image;
+
+int qx_elf_load(const wchar_t *path, qx_elf_image *out);
+void qx_elf_unload(qx_elf_image *img);
+
 /* runtime.c - the native Roblox runtime (work in progress). */
 enum { QX_RUN_NOT_READY = 2 }; /* launch exit code while the core is unfinished */
 int qx_runtime_inspect(const qx_paths *p, qx_elf_info *info, wchar_t *lib_out, size_t cap);

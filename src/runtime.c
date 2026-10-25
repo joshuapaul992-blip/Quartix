@@ -64,13 +64,29 @@ static void report(const qx_elf_info *info, const wchar_t *lib)
 int qx_runtime_launch(const qx_paths *p)
 {
     qx_elf_info info;
+    qx_elf_image img;
     wchar_t lib[QX_PATH_MAX];
 
     if (qx_runtime_inspect(p, &info, lib, QX_PATH_MAX))
         return -1;
     report(&info, lib);
+
+    /* Phase 2: map the library and apply the relocations that need no symbols. */
+    if (qx_elf_load(lib, &img)) {
+        qx_err("could not map the native library: %s", qx_last_error());
+        return -1;
+    }
     qx_log("");
-    qx_log("The library is ready to load, but the runtime core that executes it");
+    qx_log("mapped %u load segment(s) at base 0x%llx (%.1f MB reserved)", img.load_segments,
+           (unsigned long long)(uintptr_t)img.base, (double)img.span / (1024.0 * 1024.0));
+    qx_log("  entry 0x%llx", (unsigned long long)img.entry);
+    qx_log("  applied %u relative relocation(s)", img.relative_relocs);
+    qx_log("  %u symbolic relocation(s) await the bionic/syscall shim",
+           img.symbolic_relocs + img.other_relocs);
+    qx_elf_unload(&img);
+
+    qx_log("");
+    qx_log("The library is mapped, but the runtime core that executes it");
     qx_log("(Linux syscall + bionic shim, synthetic JNI, and the Vulkan/SDL");
     qx_log("graphics bridge) is still being built, so Roblox does not start yet.");
     qx_log("Login data in %ls is preserved across every build.", p->app_data_dir);
