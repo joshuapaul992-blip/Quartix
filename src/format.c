@@ -363,6 +363,57 @@ static SYSV void qx_android_log_assert(const char *cond, const char *tag, const 
     qx_err("[roblox] %s: %s", tag ? tag : "", buf);
     ExitProcess(134);
 }
+/* fprintf/vfprintf: format, then hand the bytes to the stdio router (src/stdio.c),
+ * which sends stdout/stderr to the log and real files to the CRT. */
+static SYSV int qx_fprintf(void *stream, const char *fmt, ...)
+{
+    char buf[2048];
+    sysv_va ap;
+    size_t need;
+    __builtin_sysv_va_start(ap, fmt);
+    need = qx_vformat(buf, sizeof(buf), fmt, ap);
+    __builtin_sysv_va_end(ap);
+    if (need < sizeof(buf)) {
+        qx_stdio_write(stream, buf, need);
+    } else {
+        char *big = (char *)malloc(need + 1);
+        if (big) {
+            sysv_va ap2;
+            __builtin_sysv_va_start(ap2, fmt);
+            qx_vformat(big, need + 1, fmt, ap2);
+            __builtin_sysv_va_end(ap2);
+            qx_stdio_write(stream, big, need);
+            free(big);
+        } else {
+            qx_stdio_write(stream, buf, sizeof(buf) - 1);
+        }
+    }
+    return (int)need;
+}
+static SYSV int qx_vfprintf(void *stream, const char *fmt, sysv_va ap)
+{
+    char buf[2048];
+    sysv_va cp;
+    size_t need;
+    cp[0] = ap[0];
+    need = qx_vformat(NULL, 0, fmt, cp);
+    if (need < sizeof(buf)) {
+        qx_vformat(buf, sizeof(buf), fmt, ap);
+        qx_stdio_write(stream, buf, need);
+    } else {
+        char *big = (char *)malloc(need + 1);
+        if (big) {
+            qx_vformat(big, need + 1, fmt, ap);
+            qx_stdio_write(stream, big, need);
+            free(big);
+        } else {
+            qx_vformat(buf, sizeof(buf), fmt, ap);
+            qx_stdio_write(stream, buf, sizeof(buf) - 1);
+        }
+    }
+    return (int)need;
+}
+
 /* vasprintf(strp, fmt, ap): measure with a copy, allocate, fill. */
 static SYSV int qx_vasprintf(char **out, const char *fmt, sysv_va ap)
 {
@@ -401,6 +452,8 @@ static const struct fmt_sym g_fmt_table[] = {
     {"__android_log_print", (void *)qx_android_log_print},
     {"__android_log_assert", (void *)qx_android_log_assert},
     {"vasprintf", (void *)qx_vasprintf},
+    {"fprintf", (void *)qx_fprintf},
+    {"vfprintf", (void *)qx_vfprintf},
 };
 
 void *qx_format_resolve(const char *name)

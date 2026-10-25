@@ -100,14 +100,30 @@ real hardware before claiming it works.
      delegated to the host's mingw ANSI `snprintf`. A `selftest` subcommand runs
      the formatter the way the engine calls it (a SysV→SysV variadic call) and is
      checked in CI under Wine.
-   - Against the real `libroblox.so` the shim now resolves **131 of 637**
+   - *Done:* the stdio / file surface (`src/stdio.c`) — the `FILE*` stream
+     functions (`fopen`/`fclose`/`fdopen`/`fread`/`fwrite`/`fseek`/`ftell`/
+     `fgets`/`fputc`/`fputs`/`getc`/`puts`/`feof`/`ferror`/`fflush`/`setvbuf`),
+     the raw descriptors (`open`/`close`/`read`/`write`/`lseek`), the path
+     operations (`access`/`mkdir`/`remove`/`rename`/`unlink`), the three
+     standard streams as data symbols, and `fprintf`/`vfprintf` (in
+     `src/format.c`, which have the variadic machinery). All are backed by the
+     host CRT: a `FILE*` handed to the engine is a CRT `FILE*` and a descriptor
+     is a CRT descriptor, so follow-on calls forward straight through. Paths are
+     converted UTF-8→UTF-16 and the `_w*` entry points used; `open()` flags are
+     translated from Linux `O_*` to the host `_O_*` with `_O_BINARY` forced;
+     `fseek`/`ftell`/`lseek` use 64-bit offsets (LP64); host `errno` is
+     propagated into the engine's `__errno` location on failure; and
+     `stdout`/`stderr` text is routed into the Quartix log. A `stdio` self-test
+     round-trips a file through the stream and raw paths and is run in CI under
+     Wine.
+   - Against the real `libroblox.so` the shim now resolves **171 of 637**
      symbolic relocations.
-   - *Next:* the stdio FILE surface (`fopen`/`fread`/`fwrite`/`fputs`/`stderr`/
-     `stdout` and the raw `open`/`read`/`write`, ~25 symbols, which `fprintf`/
-     `fscanf`/`sscanf` join), the remaining non-variadic libc (time/
-     `clock_gettime`, which must share its monotonic base with
-     `pthread_cond_timedwait`), and a handler for the Linux x86-64 syscalls
-     bionic makes underneath (memory, futex, files, time).
+   - *Next:* filesystem metadata (`stat`/`fstat`, which need the bionic
+     `struct stat` byte layout) and the `scanf` family (`fscanf`/`sscanf`/
+     `vsscanf`); the remaining non-variadic libc (time/`clock_gettime`, which
+     must share its monotonic base with `pthread_cond_timedwait`); and a handler
+     for the Linux x86-64 syscalls bionic makes underneath (memory, futex,
+     files, time).
 4. **Synthetic JNI / Android framework** — a minimal JNI environment (in the
    spirit of `libjnivm`) so the engine's calls into "Java" for device info,
    networking, windowing and lifecycle resolve to host implementations.

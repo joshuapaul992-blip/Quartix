@@ -78,9 +78,13 @@ int wmain(int argc, wchar_t **argv)
         return 0;
     }
     if (wcscmp(argv[1], L"selftest") == 0 && argc == 2) {
-        int total = 0, fails = qx_format_selftest(&total);
-        qx_log("formatter self-test: %d check(s), %d failure(s)", total, fails);
-        return fails ? 1 : 0;
+        int ft = 0, st = 0;
+        int ff = qx_format_selftest(&ft);
+        int sf = qx_stdio_selftest(&st);
+        qx_log("formatter self-test: %d check(s), %d failure(s)", ft, ff);
+        qx_log("stdio self-test:     %d check(s), %d failure(s)", st, sf);
+        qx_log("self-test total:     %d check(s), %d failure(s)", ft + st, ff + sf);
+        return (ff + sf) ? 1 : 0;
     }
     if (wcscmp(argv[1], L"apk-ls") == 0 && argc == 3) {
         if (qx_apk_list(argv[2], list_visit, NULL)) {
