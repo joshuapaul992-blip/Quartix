@@ -40,17 +40,39 @@ real hardware before claiming it works.
    resolves `apk\current`, parses the ELF64 header, program headers and dynamic
    section, and reports the load segments, needed libraries, soname and TLS. See
    `src/elf.c`.
-2. **ELF loader** — *mapping + relative relocations done (`src/loader.c`).*
-   `quartix run` reserves one span, copies the `PT_LOAD` segments to a load bias,
-   applies the `R_X86_64_RELATIVE` relocations (verified against `readelf`), and
-   sets each segment's final page protection. The symbolic relocations
-   (`GLOB_DAT`, `JUMP_SLOT`, 64-bit) are counted and left for phase 3, which
-   resolves them; nothing transfers control to the mapped code yet.
-3. **Linux syscall + bionic shim** — *the core.* A user-space handler for the
-   Linux x86-64 syscalls the engine and bionic use (memory, threads/futex,
-   files, sockets, time, `ioctl`), mapped onto Win32/NT, plus bionic libc
-   entry points (`pthread_*`, `malloc`, string/stdio). This is the Linuxulator
-   equivalent that Windows does not provide.
+2. **ELF loader** — *done (`src/loader.c`).* `quartix run` reserves one span,
+   copies the `PT_LOAD` segments to a load bias, applies the relocations, and
+   sets each segment's final page protection. `libroblox.so` packs its relative
+   relocations in **Android's APS2 format** (`DT_ANDROID_RELA`), not a plain
+   `RELA` table, so the loader decodes the APS2 sleb128 stream as well as the
+   standard `RELA`/PLT tables. Symbolic relocations (`GLOB_DAT`, `JUMP_SLOT`,
+   64-bit) are bound through the shim resolver (`src/shim.c`); unresolved names
+   bind to a SysV-ABI trap so the image stays complete. Verified against the real
+   `libroblox.so`: **628,016** relative relocations applied (matching an
+   independent decoder) and 637 symbolic bound. Nothing transfers control to the
+   mapped code yet — that is phase 3.
+
+   What the real binary (Roblox 2.744.1081, API 26) told us, now driving the
+   remaining phases:
+   - It needs 10 Android system libraries — `libc`, `libm`, `libdl`, `liblog`,
+     `libandroid`, `libEGL`, `libGLESv2`, `libOpenSLES`, `libOpenMAXAL`,
+     `libmediandk` — and imports **585** symbols from them.
+   - Graphics is **OpenGL ES 2 + EGL** (~91 entry points), so the Windows side
+     needs a GLES/EGL translation (e.g. ANGLE) rather than raw desktop GL.
+   - It is almost entirely NDK-native: only **1** JNI symbol, so very little of a
+     Java VM is required, but it does expect the `libandroid` NativeActivity
+     surface (`ALooper`, `AAssetManager`, `ANativeWindow`, `AInputQueue`, …).
+   - It is linked `BIND_NOW` with 2968 `INIT_ARRAY` initializers that must run
+     after relocation, once the shim can satisfy the symbols they touch.
+3. **Linux syscall + bionic shim** — *the core, next.* Real, **SysV-ABI**
+   implementations of the libc/libm/libdl/liblog symbols the engine imports
+   (`pthread_*`, `malloc`, string/stdio, math, `dlsym`, `__android_log_*`),
+   plus a handler for the Linux x86-64 syscalls bionic makes underneath
+   (memory, futex, files, time). Every such function must be
+   `__attribute__((sysv_abi))`, because the Android code uses the System V
+   calling convention and Windows uses the Microsoft one — the one thing
+   Linux/FreeBSD give Sober/Mocktail for free. As symbols become real,
+   `qx_shim_resolve` returns them and the loader's resolved count rises.
 4. **Synthetic JNI / Android framework** — a minimal JNI environment (in the
    spirit of `libjnivm`) so the engine's calls into "Java" for device info,
    networking, windowing and lifecycle resolve to host implementations.

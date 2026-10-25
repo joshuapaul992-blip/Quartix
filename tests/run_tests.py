@@ -166,6 +166,39 @@ def make_elf64_x86_64():
     return ehdr + phdr
 
 
+def _sleb(v):
+    """Signed LEB128, matching what the loader's APS2 decoder reads."""
+    out = bytearray()
+    while True:
+        b = v & 0x7f
+        v >>= 7
+        if (v == 0 and not (b & 0x40)) or (v == -1 and (b & 0x40)):
+            out.append(b)
+            return bytes(out)
+        out.append(b | 0x80)
+
+
+def make_elf_with_aps2():
+    """A one-PT_LOAD ELF64 x86-64 whose DT_ANDROID_RELA section carries two
+    R_X86_64_RELATIVE relocations in Android's APS2 packed format. Exercises the
+    loader's APS2 decoder without the real 117 MB library. vaddr == file offset."""
+    import struct
+    TOTAL, DYN, BLOB, R1, R2 = 0x1000, 0x100, 0x200, 0x300, 0x308
+    img = bytearray(TOTAL)
+    img[0:64] = (b"\x7fELF" + bytes([2, 1, 1, 0]) + b"\0" * 8 +
+                 struct.pack("<HHIQQQIHHHHHH", 3, 62, 1, 0, 64, 0, 0, 64, 56, 2, 0, 0, 0))
+    img[64:120] = struct.pack("<IIQQQQQQ", 1, 7, 0, 0, 0, TOTAL, TOTAL, 0x1000)   # PT_LOAD rwx
+    img[120:176] = struct.pack("<IIQQQQQQ", 2, 6, DYN, DYN, DYN, 48, 48, 8)       # PT_DYNAMIC
+    # APS2: count=2, initial offset=0; one group of 2, flags=HAS_ADDEND(8).
+    blob = b"APS2" + _sleb(2) + _sleb(0) + _sleb(2) + _sleb(8)
+    blob += _sleb(R1) + _sleb(8) + _sleb(0x1111)   # +0x300 -> R1, R_X86_64_RELATIVE, addend
+    blob += _sleb(R2 - R1) + _sleb(8) + _sleb(0x2222)  # +8 -> R2
+    img[BLOB:BLOB + len(blob)] = blob
+    dyn = struct.pack("<QQQQQQ", 0x60000011, BLOB, 0x60000012, len(blob), 0, 0)  # ANDROID_RELA, RELASZ, NULL
+    img[DYN:DYN + len(dyn)] = dyn
+    return bytes(img)
+
+
 def test_runtime(tmp):
     data = os.path.join(tmp, "data")
 
@@ -186,6 +219,13 @@ def test_runtime(tmp):
           r.returncode == 2 and "does not start yet" in r.stdout, str(r.returncode) + r.stdout + r.stderr)
     check("run maps the library's load segment", "mapped 1 load segment" in r.stdout, r.stdout)
     check("run promises login data is preserved", "preserved" in r.stdout, r.stdout)
+
+    aps2 = os.path.join(tmp, "aps2.apk")
+    make_apk(aps2, make_elf_with_aps2())
+    run(EXE, "import-apk", winpath(aps2), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("run applies APS2 packed relative relocations",
+          "applied 2 relative relocation(s)" in r.stdout, r.stdout + r.stderr)
 
     bad = os.path.join(tmp, "notelf.apk")
     make_apk(bad, b"\x7fELF" + b"\xff" * 2000)  # ELF magic, but not a usable ELF

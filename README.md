@@ -117,11 +117,13 @@ xvfb-run -a make test WINE=/usr/lib/wine/wine64   # window tests need a display
 - **Done:** x64 executable for Vista/7/8.1, install/data split, APK import, signed
   automatic updates over HTTPS with downgrade protection, a native window, release
   workflow, CI that checks compatibility and runs tests under Wine, a runtime that
-  locates and inspects the Android native library, and an ELF loader that maps it
-  into memory and applies its relative relocations.
-- **Next:** the runtime core — the Linux-syscall/bionic shim that resolves the
-  remaining relocations and serves the Android ABI, then synthetic JNI, Vulkan/SDL
-  graphics and input, and audio. See [docs/PLAN.md](docs/PLAN.md).
+  inspects the Android native library, and an ELF loader that maps it into memory
+  and applies its relocations — including Android's **APS2** packed relocations
+  (verified against the real `libroblox.so`: 628,016 applied).
+- **Next:** the runtime core — the SysV-ABI bionic/syscall shim that supplies the
+  585 symbols the engine imports, then the `libandroid` NativeActivity surface,
+  EGL + OpenGL&nbsp;ES&nbsp;2 graphics and input, and audio. See
+  [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 
