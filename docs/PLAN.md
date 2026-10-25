@@ -58,7 +58,8 @@ real hardware before claiming it works.
      `libandroid`, `libEGL`, `libGLESv2`, `libOpenSLES`, `libOpenMAXAL`,
      `libmediandk` — and imports **585** symbols from them.
    - Graphics is **OpenGL ES 2 + EGL** (~91 entry points), so the Windows side
-     needs a GLES/EGL translation (e.g. ANGLE) rather than raw desktop GL.
+     needs a GLES/EGL translation rather than raw desktop GL. Quartix vendors
+     **ANGLE** for this (phase 5) instead of writing it by hand.
    - It is almost entirely NDK-native: only **1** JNI symbol, so very little of a
      Java VM is required, but it does expect the `libandroid` NativeActivity
      surface (`ALooper`, `AAssetManager`, `ANativeWindow`, `AInputQueue`, …).
@@ -125,21 +126,48 @@ real hardware before claiming it works.
      register-passed result pointers through `__builtin_sysv_va_list`, and it
      handles `d i u o x f e g s c [set] n %%` with width, length (LP64 `l` →
      64-bit) and assignment suppression. A `scanf` self-test is run in CI.
-   - Against the real `libroblox.so` the shim now resolves **181 of 637**
+   - *Done:* the OS services (`src/os.c`) — time (`time`, `gettimeofday`,
+     `clock_gettime`/`clock_getres`, `clock`, `difftime`, `nanosleep`), the
+     calendar (`gmtime`/`localtime` and their `_r` forms, `mktime`, `strftime`,
+     `tzset`, filling a 56-byte bionic `struct tm` checked at compile time),
+     virtual memory (`mmap`/`munmap`/`mprotect`/`madvise`/`getpagesize` onto
+     `VirtualAlloc`/`VirtualProtect`/`VirtualFree`, anonymous mappings only), and
+     the process/system queries (`getpid`, `gettid`, `getuid`, `sysconf` with the
+     bionic `_SC_*` names, `getcwd`, and `raise`/`signal`/`sigaction` as accepting
+     no-ops, since Win32 has no POSIX signals). `clock_gettime(CLOCK_MONOTONIC)`
+     is based on `GetTickCount64`, the same base `pthread_cond_timedwait` uses in
+     `src/thread.c`, so a monotonic deadline the engine computes lines up with the
+     wait. An `os` self-test is run in CI.
+   - Against the real `libroblox.so` the shim now resolves **210 of 637**
      symbolic relocations.
-   - *Next:* the remaining non-variadic libc (time/`clock_gettime`, which must
-     share its monotonic base with `pthread_cond_timedwait`) and a handler for
-     the Linux x86-64 syscalls bionic makes underneath (memory, futex, files,
-     time). After that the shim's pure-libc surface is largely covered and the
-     remaining pending symbols are the Android framework ones (phase 4–6:
-     `libandroid` NativeActivity, EGL/GLES, media/audio).
+   - *Next:* the shim's pure-libc surface is now largely covered. The remaining
+     pending symbols are the Android framework ones, which are the next phases:
+     `libandroid` NativeActivity (phase 4), EGL/GLES graphics — vendored from
+     **ANGLE** rather than hand-written (phase 5) — and media/audio (phase 6).
 4. **Synthetic JNI / Android framework** — a minimal JNI environment (in the
    spirit of `libjnivm`) so the engine's calls into "Java" for device info,
    networking, windowing and lifecycle resolve to host implementations.
-5. **Graphics + input** — translate the engine's `ANativeWindow` / EGL / GLES
-   calls to a Vulkan surface presented through SDL, and feed keyboard/mouse back
-   in. Vulkan and SDL are available on Windows 7.
-6. **Audio** — bridge OpenSL ES / FMOD to a Windows audio backend
+5. **Graphics + input** — the engine draws with **OpenGL ES 2 + EGL** (~91 entry
+   points). Rather than hand-write a GLES→desktop translation, Quartix vendors
+   **[ANGLE](https://github.com/google/angle)**, Google's production GLES/EGL
+   implementation — the same one Chrome ships — and binds the engine's `libEGL`
+   and `libGLESv2` imports straight to ANGLE's own `libEGL.dll`/`libGLESv2.dll`.
+   ANGLE already does exactly the job this phase needs (turn GLES2+EGL into a
+   native Windows graphics API), it is battle-tested, and reusing it removes the
+   single largest hand-written surface from the project. ANGLE's **D3D11** backend
+   covers Windows 7 and 8.1; its **D3D9** backend reaches the Vista floor, so the
+   backend is chosen at runtime from what the host supports. The remaining
+   Quartix-side work is small: create the window, hand ANGLE a native window
+   handle for its `EGLNativeWindowType`, drive the `ANativeWindow`/`AInputQueue`
+   surface from phase 4, and feed keyboard/mouse events back in. The ANGLE DLLs
+   are vendored as a pinned, unmodified third-party build (like Monocypher/miniz/
+   BearSSL) and ship beside `Quartix.exe`.
+
+   *Why this is the big accelerator:* graphics was the largest remaining
+   hand-written phase. Vendoring ANGLE collapses ~91 GLES/EGL entry points from
+   "implement and validate by hand" down to "bind imports to a trusted DLL",
+   which is why it moves the timeline more than any other single change.
+6. **Audio** — bridge OpenSL ES / OpenMAX AL to a Windows audio backend
    (`dsound.dll`/`winmm.dll` on the Vista floor).
 
 ## Kept from the APK-manager groundwork
