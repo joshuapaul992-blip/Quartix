@@ -199,6 +199,33 @@ def make_elf_with_aps2():
     return bytes(img)
 
 
+def make_elf_with_symbol():
+    """A one-PT_LOAD ELF64 x86-64 with one R_X86_64_JUMP_SLOT relocation against
+    a symbol named "memcpy", so the loader must resolve it through the shim.
+    Exercises symbol resolution (DT_SYMTAB/DT_STRTAB + DT_JMPREL)."""
+    import struct
+    TOTAL, DYN, SYMTAB, DYNSTR, JMPREL, GOT = 0x1000, 0x100, 0x200, 0x240, 0x280, 0x300
+    img = bytearray(TOTAL)
+    img[0:64] = (b"\x7fELF" + bytes([2, 1, 1, 0]) + b"\0" * 8 +
+                 struct.pack("<HHIQQQIHHHHHH", 3, 62, 1, 0, 64, 0, 0, 64, 56, 2, 0, 0, 0))
+    img[64:120] = struct.pack("<IIQQQQQQ", 1, 7, 0, 0, 0, TOTAL, TOTAL, 0x1000)   # PT_LOAD rwx
+    img[120:176] = struct.pack("<IIQQQQQQ", 2, 6, DYN, DYN, DYN, 96, 96, 8)       # PT_DYNAMIC
+    # dynsym: index 0 null, index 1 -> "memcpy"; Elf64_Sym is 24 bytes.
+    img[SYMTAB:SYMTAB + 24] = struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)
+    img[SYMTAB + 24:SYMTAB + 48] = struct.pack("<IBBHQQ", 1, 0x12, 0, 0, 0, 0)    # st_name=1
+    img[DYNSTR:DYNSTR + 8] = b"\x00memcpy\x00"
+    img[JMPREL:JMPREL + 24] = struct.pack("<QQq", GOT, (1 << 32) | 7, 0)          # JUMP_SLOT, sym 1
+    dyn = struct.pack("<QQQQQQQQQQQQ",
+                      6, SYMTAB,          # DT_SYMTAB
+                      5, DYNSTR,          # DT_STRTAB
+                      10, 8,              # DT_STRSZ
+                      23, JMPREL,         # DT_JMPREL
+                      2, 24,              # DT_PLTRELSZ
+                      0, 0)               # DT_NULL
+    img[DYN:DYN + len(dyn)] = dyn
+    return bytes(img)
+
+
 def test_runtime(tmp):
     data = os.path.join(tmp, "data")
 
@@ -226,6 +253,13 @@ def test_runtime(tmp):
     r = run(EXE, "run", data_dir=data)
     check("run applies APS2 packed relative relocations",
           "applied 2 relative relocation(s)" in r.stdout, r.stdout + r.stderr)
+
+    sym = os.path.join(tmp, "sym.apk")
+    make_apk(sym, make_elf_with_symbol())
+    run(EXE, "import-apk", winpath(sym), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("run resolves a known symbol through the shim",
+          "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
 
     bad = os.path.join(tmp, "notelf.apk")
     make_apk(bad, b"\x7fELF" + b"\xff" * 2000)  # ELF magic, but not a usable ELF
