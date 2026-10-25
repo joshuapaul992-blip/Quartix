@@ -72,6 +72,19 @@ test: check
 clean:
 	rm -rf build
 
+# Fetch the ANGLE graphics DLLs (libEGL/libGLESv2/d3dcompiler_47) next to the
+# executable, verified by SHA-256. Kept out of the default build and tests so CI
+# need not download them; run it before packaging or local graphics testing.
+angle: $(OUT)
+	$(PYTHON) tools/fetch_angle.py $(dir $(OUT))
+
+# A distributable zip: the executable plus the verified ANGLE DLLs.
+QX_VER := $(shell sed -n 's/.*QX_VERSION_A "\(.*\)".*/\1/p' src/version.h)
+dist: $(OUT) angle
+	cd $(dir $(OUT)) && zip -q -j Quartix-$(QX_VER)-win7-x64.zip \
+	    Quartix.exe libEGL.dll libGLESv2.dll d3dcompiler_47.dll
+	@echo "packaged $(dir $(OUT))Quartix-$(QX_VER)-win7-x64.zip"
+
 FORCE:
 
-.PHONY: all check test clean FORCE
+.PHONY: all check test clean angle dist FORCE
