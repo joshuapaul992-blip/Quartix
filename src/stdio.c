@@ -358,6 +358,79 @@ static SYSV int qx_unlink(const char *path)
     return r;
 }
 
+static SYSV int qx_ungetc(int ch, void *f) { return ungetc(ch, (FILE *)f); }
+
+/* ---- stat / fstat / lstat --------------------------------------------------
+ * The engine reads a bionic struct stat, whose x86-64 layout is the Linux
+ * kernel one (144 bytes). We fill it from the host CRT's _stat64 (whose S_IF*
+ * bits already match POSIX). */
+struct lx_stat {
+    uint64_t st_dev;
+    uint64_t st_ino;
+    uint64_t st_nlink;
+    uint32_t st_mode;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint32_t __pad0;
+    uint64_t st_rdev;
+    int64_t st_size;
+    int64_t st_blksize;
+    int64_t st_blocks;
+    int64_t st_atime_sec;
+    int64_t st_atime_nsec;
+    int64_t st_mtime_sec;
+    int64_t st_mtime_nsec;
+    int64_t st_ctime_sec;
+    int64_t st_ctime_nsec;
+    int64_t __reserved[3];
+};
+typedef char qx_stat_size_check[sizeof(struct lx_stat) == 144 ? 1 : -1];
+
+static void fill_stat(const struct _stat64 *ms, struct lx_stat *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->st_dev = (uint64_t)ms->st_dev;
+    out->st_ino = (uint64_t)ms->st_ino;
+    out->st_nlink = ms->st_nlink ? ms->st_nlink : 1;
+    out->st_mode = ms->st_mode;      /* S_IFDIR/S_IFREG bits match POSIX */
+    out->st_rdev = (uint64_t)ms->st_rdev;
+    out->st_size = ms->st_size;
+    out->st_blksize = 512;
+    out->st_blocks = (ms->st_size + 511) / 512;
+    out->st_atime_sec = ms->st_atime;
+    out->st_mtime_sec = ms->st_mtime;
+    out->st_ctime_sec = ms->st_ctime;
+}
+
+static SYSV int qx_stat(const char *path, void *buf)
+{
+    wchar_t *wp = to_wide(path);
+    struct _stat64 ms;
+    int r;
+    if (!wp) {
+        carry_errno();
+        return -1;
+    }
+    r = _wstat64(wp, &ms);
+    free(wp);
+    if (r < 0) {
+        carry_errno();
+        return -1;
+    }
+    fill_stat(&ms, (struct lx_stat *)buf);
+    return 0;
+}
+static SYSV int qx_fstat(int fd, void *buf)
+{
+    struct _stat64 ms;
+    if (_fstat64(fd, &ms) < 0) {
+        carry_errno();
+        return -1;
+    }
+    fill_stat(&ms, (struct lx_stat *)buf);
+    return 0;
+}
+
 /* ---- resolver -------------------------------------------------------------- */
 struct io_sym {
     const char *name;
@@ -373,7 +446,8 @@ static const struct io_sym g_io_table[] = {
     {"open", (void *)qx_open}, {"close", (void *)qx_close}, {"read", (void *)qx_read},
     {"write", (void *)qx_write}, {"lseek", (void *)qx_lseek},
     {"access", (void *)qx_access}, {"mkdir", (void *)qx_mkdir}, {"remove", (void *)qx_remove},
-    {"rename", (void *)qx_rename}, {"unlink", (void *)qx_unlink},
+    {"rename", (void *)qx_rename}, {"unlink", (void *)qx_unlink}, {"ungetc", (void *)qx_ungetc},
+    {"stat", (void *)qx_stat}, {"fstat", (void *)qx_fstat}, {"lstat", (void *)qx_stat},
 };
 
 void *qx_stdio_resolve(const char *name)
@@ -469,6 +543,14 @@ int qx_stdio_selftest(int *total)
         if (off != 4 || got != 4 || memcmp(b, "4567", 4) != 0)
             fails++;
         qx_close(fd);
+    }
+
+    /* stat: a regular file (S_IFREG) of 10 bytes, from the raw write above */
+    n++;
+    {
+        struct lx_stat st;
+        if (qx_stat(path8, &st) != 0 || st.st_size != 10 || (st.st_mode & 0xF000u) != 0x8000u)
+            fails++;
     }
 
     /* access / rename / unlink */

@@ -195,5 +195,8 @@ void *qx_shim_resolve(const char *name)
     r = qx_format_resolve(name);
     if (r)
         return r;
-    return qx_stdio_resolve(name);
+    r = qx_stdio_resolve(name);
+    if (r)
+        return r;
+    return qx_scan_resolve(name);
 }

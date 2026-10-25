@@ -116,14 +116,23 @@ real hardware before claiming it works.
      `stdout`/`stderr` text is routed into the Quartix log. A `stdio` self-test
      round-trips a file through the stream and raw paths and is run in CI under
      Wine.
-   - Against the real `libroblox.so` the shim now resolves **171 of 637**
+   - *Done:* filesystem metadata and the `scanf` family. `stat`/`fstat`/`lstat`
+     (`src/stdio.c`) fill the bionic `struct stat` — whose x86-64 layout is the
+     144-byte Linux kernel one, checked at compile time — from the host CRT's
+     `_stat64`, and `ungetc` was added. The `scanf` family (`src/scan.c`:
+     `sscanf`/`vsscanf`/`fscanf`) is one scanner over a character source that is
+     either a string or a `FILE*`; like the printf family it reads the engine's
+     register-passed result pointers through `__builtin_sysv_va_list`, and it
+     handles `d i u o x f e g s c [set] n %%` with width, length (LP64 `l` →
+     64-bit) and assignment suppression. A `scanf` self-test is run in CI.
+   - Against the real `libroblox.so` the shim now resolves **181 of 637**
      symbolic relocations.
-   - *Next:* filesystem metadata (`stat`/`fstat`, which need the bionic
-     `struct stat` byte layout) and the `scanf` family (`fscanf`/`sscanf`/
-     `vsscanf`); the remaining non-variadic libc (time/`clock_gettime`, which
-     must share its monotonic base with `pthread_cond_timedwait`); and a handler
-     for the Linux x86-64 syscalls bionic makes underneath (memory, futex,
-     files, time).
+   - *Next:* the remaining non-variadic libc (time/`clock_gettime`, which must
+     share its monotonic base with `pthread_cond_timedwait`) and a handler for
+     the Linux x86-64 syscalls bionic makes underneath (memory, futex, files,
+     time). After that the shim's pure-libc surface is largely covered and the
+     remaining pending symbols are the Android framework ones (phase 4–6:
+     `libandroid` NativeActivity, EGL/GLES, media/audio).
 4. **Synthetic JNI / Android framework** — a minimal JNI environment (in the
    spirit of `libjnivm`) so the engine's calls into "Java" for device info,
    networking, windowing and lifecycle resolve to host implementations.

@@ -126,11 +126,12 @@ xvfb-run -a make test WINE=/usr/lib/wine/wine64   # window tests need a display
   Win32 threads, condition variables and FLS), the variadic printf/log family (a
   SysV `va_list` formatter that reads the engine's register-passed varargs), and
   the stdio/file surface (`fopen`/`fread`/`fwrite`, raw `open`/`read`/`write`,
-  `access`/`mkdir`/`rename`/… backed by the host CRT). Against the real
-  `libroblox.so` the shim resolves 171 of the 637 symbolic relocations.
-- **Next:** filesystem metadata (`stat`) and the `scanf` family, the remaining
-  libc (time), the `libandroid` NativeActivity surface, EGL + OpenGL&nbsp;ES&nbsp;2
-  graphics and input, and audio. See [docs/PLAN.md](docs/PLAN.md).
+  `access`/`mkdir`/`rename`/… backed by the host CRT), filesystem metadata
+  (`stat`/`fstat`), and the `scanf` family. Against the real `libroblox.so` the
+  shim resolves 181 of the 637 symbolic relocations.
+- **Next:** the remaining libc (time), then the Android framework: the
+  `libandroid` NativeActivity surface, EGL + OpenGL&nbsp;ES&nbsp;2 graphics and
+  input, and audio. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 
