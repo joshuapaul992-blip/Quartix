@@ -164,15 +164,15 @@ is expected until the Android framework and graphics phases land.
   libc/libm surface — the `float` math and hyperbolics, the fortified
   `_FORTIFY_SOURCE` helpers (`__memcpy_chk`/`__strcpy_chk`/…), UTF-8
   `mbrtowc`/`wcrtomb`, and the runtime glue (`__cxa_atexit`/`__cxa_finalize`,
-  `arc4random_buf`). Against the real `libroblox.so` the shim resolves 300 of
-  the 637 symbolic relocations — the pure-libc surface is now essentially
-  complete.
-- **Next:** the Android framework — the `libandroid` NativeActivity surface,
-  then EGL + OpenGL&nbsp;ES&nbsp;2 graphics and input (vendored from
-  [ANGLE](https://github.com/google/angle) rather than hand-written), and audio.
-  The remaining pending symbols are almost entirely those framework families
-  (plus the BSD sockets Roblox uses for networking). See
-  [docs/PLAN.md](docs/PLAN.md).
+  `arc4random_buf`). The pure-libc surface is now essentially complete, and the
+  first Android-framework slice — the `libandroid` **NativeActivity surface**
+  (`AAssetManager`/`AAsset`, `AConfiguration`, `ALooper`, `ANativeWindow`,
+  `AHardwareBuffer`, `AImageReader`/`AImage`) — is in. Against the real
+  `libroblox.so` the shim resolves 336 of the 637 symbolic relocations.
+- **Next:** the rest of the Android framework — EGL + OpenGL&nbsp;ES&nbsp;2
+  graphics and input (vendored from [ANGLE](https://github.com/google/angle)
+  rather than hand-written), the `libmediandk` media layer, and the BSD sockets
+  Roblox uses for networking (a Winsock bridge). See [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 

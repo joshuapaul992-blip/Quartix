@@ -152,16 +152,29 @@ real hardware before claiming it works.
      `arc4random_buf` (from the Windows CSP), and the no-op-on-Windows calls
      (`__register_atfork`, `getauxval`, `__system_property_get`). A libc
      self-test is run in CI.
-   - Against the real `libroblox.so` the shim now resolves **300 of 637**
-     symbolic relocations, and the pure-libc surface is essentially complete.
-   - *Next:* the remaining pending symbols are almost entirely the Android
-     framework families, which are the next phases: `libandroid` NativeActivity
-     (phase 4), EGL/GLES graphics — vendored from **ANGLE** rather than
-     hand-written (phase 5) — and `libmediandk`/audio (phase 6); plus the BSD
-     sockets the engine uses for networking, which get their own Winsock bridge.
-4. **Synthetic JNI / Android framework** — a minimal JNI environment (in the
-   spirit of `libjnivm`) so the engine's calls into "Java" for device info,
-   networking, windowing and lifecycle resolve to host implementations.
+   - Against the real `libroblox.so` the shim resolves **336 of 637** symbolic
+     relocations; with phase 4 started (below) the pure-libc surface is complete
+     and the first Android-framework family is in.
+   - *Next:* the remaining pending symbols are the rest of the Android framework
+     — EGL/GLES graphics, vendored from **ANGLE** rather than hand-written
+     (phase 5), and `libmediandk`/audio (phase 6) — plus the BSD sockets the
+     engine uses for networking, which get their own Winsock bridge.
+4. **libandroid NativeActivity surface** — *in progress (`src/android.c`).* The
+   engine is an NDK NativeActivity app (only **1** JNI symbol, so almost no Java
+   VM is needed), so it drives its lifecycle and I/O through the `libandroid` C
+   API. This slice supplies that surface: `AAssetManager`/`AAsset` (reading a
+   packaged asset into a byte buffer, backed by a filesystem asset root the
+   runtime points at the APK's assets), `AConfiguration` (locale, screen size,
+   density), `ALooper` (a real per-thread event loop whose `pollOnce` waits up
+   to the caller's timeout), `ANativeWindow` (a refcounted handle reporting its
+   dimensions; binding it to a real `HWND`/EGL surface is phase 5), and the
+   graphics-interop objects `AHardwareBuffer`/`AImageReader`/`AImage` (safe
+   placeholders until the graphics phase). These are framework entry points:
+   they resolve and are validated structurally (an `android` self-test exercises
+   the asset/config/looper/window mechanics in CI), with their full behavior
+   exercised once the window and ANGLE land and the client runs on real
+   hardware. A tiny synthetic JNI shim for the single JNI symbol and the
+   `ANativeActivity` glue lands alongside the window in phase 5.
 5. **Graphics + input** — the engine draws with **OpenGL ES 2 + EGL** (~91 entry
    points). Rather than hand-write a GLES→desktop translation, Quartix vendors
    **[ANGLE](https://github.com/google/angle)**, Google's production GLES/EGL
