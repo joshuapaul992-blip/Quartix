@@ -249,7 +249,10 @@ static SYSV int qx_open(const char *path, int flags, int mode)
 }
 static SYSV int qx_close(int fd)
 {
-    int r = _close(fd);
+    int r;
+    if (qx_socket_is_sock(fd)) /* sockets are not CRT fds; route to closesocket */
+        return qx_socket_close(fd);
+    r = _close(fd);
     if (r < 0)
         carry_errno();
     return r;
@@ -258,6 +261,8 @@ static SYSV long long qx_read(int fd, void *buf, size_t n)
 {
     int r;
     unsigned cap = n > 0x7fffffffu ? 0x7fffffffu : (unsigned)n;
+    if (qx_socket_is_sock(fd)) /* a socket fd uses recv, not _read */
+        return qx_socket_read(fd, buf, n);
     r = _read(fd, buf, cap);
     if (r < 0)
         carry_errno();
@@ -267,6 +272,8 @@ static SYSV long long qx_write(int fd, const void *buf, size_t n)
 {
     int r;
     unsigned cap = n > 0x7fffffffu ? 0x7fffffffu : (unsigned)n;
+    if (qx_socket_is_sock(fd)) /* a socket fd uses send, not _write */
+        return qx_socket_write(fd, buf, n);
     r = _write(fd, buf, cap);
     if (r < 0)
         carry_errno();

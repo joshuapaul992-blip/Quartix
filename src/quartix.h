@@ -137,6 +137,12 @@ void *qx_scan_resolve(const char *name);   /* scanf slice, or NULL */
 void *qx_os_resolve(const char *name);     /* time/memory/process slice, or NULL */
 void *qx_cstd_resolve(const char *name);   /* libm floats, fortified _chk, wide/ctype, runtime glue, or NULL */
 void *qx_android_resolve(const char *name); /* libandroid NativeActivity slice, or NULL */
+void *qx_socket_resolve(const char *name);  /* BSD sockets (Winsock) slice, or NULL */
+/* socket fds are not CRT descriptors, so stdio.c routes close/read/write for them here */
+int qx_socket_is_sock(int fd);
+int qx_socket_close(int fd);
+long long qx_socket_read(int fd, void *buf, size_t n);
+long long qx_socket_write(int fd, const void *buf, size_t n);
 void qx_android_set_asset_dir(const wchar_t *dir); /* point the asset manager at the APK's assets */
 void qx_android_set_window_size(int w, int h);     /* set the native window dimensions */
 void *qx_android_asset_manager(void);              /* the stand-in AAssetManager handle */
@@ -151,6 +157,7 @@ int __attribute__((sysv_abi)) qx_scan_selftest(int *total); /* scanf checks; ret
 int __attribute__((sysv_abi)) qx_os_selftest(int *total);   /* time/memory/process checks; returns failures */
 int __attribute__((sysv_abi)) qx_cstd_selftest(int *total); /* libc-completion checks; returns failures */
 int __attribute__((sysv_abi)) qx_android_selftest(int *total); /* libandroid surface checks; returns failures */
+int __attribute__((sysv_abi)) qx_socket_selftest(int *total);  /* sockets loopback checks; returns failures */
 
 /* runtime.c - the native Roblox runtime (work in progress). */
 enum { QX_RUN_NOT_READY = 2 }; /* launch exit code while the core is unfinished */

@@ -325,12 +325,20 @@ def test_runtime(tmp):
     check("run resolves a libandroid NativeActivity symbol through the shim",
           "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
 
+    sksym = os.path.join(tmp, "socket.apk")
+    make_apk(sksym, make_elf_with_symbol(b"socket"))
+    run(EXE, "import-apk", winpath(sksym), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("run resolves a socket symbol through the shim",
+          "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
+
     # The SysV-ABI formatter, the stdio/file round-trip, the scanf parser, the
     # time/memory/process services, the libc completion (math, fortified _chk,
-    # UTF-8, runtime glue), and the libandroid NativeActivity surface, each
-    # exercised the way the engine calls them.
+    # UTF-8, runtime glue), the libandroid NativeActivity surface, and the
+    # Winsock socket bridge (a loopback TCP round-trip), each exercised the way
+    # the engine calls them.
     r = run(EXE, "selftest", data_dir=data)
-    check("formatter, stdio, scanf, os, libc and android self-tests pass",
+    check("formatter, stdio, scanf, os, libc, android and socket self-tests pass",
           r.returncode == 0 and "self-test total:" in r.stdout and "0 failure(s)" in r.stdout
           and "1 failure" not in r.stdout, str(r.returncode) + r.stdout + r.stderr)
 
