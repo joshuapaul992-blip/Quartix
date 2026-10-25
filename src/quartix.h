@@ -133,12 +133,14 @@ void *qx_shim_trap_addr(void);           /* the placeholder trap's address */
 void *qx_thread_resolve(const char *name); /* pthreads/sched slice, or NULL */
 void *qx_format_resolve(const char *name); /* variadic printf/log slice, or NULL */
 void *qx_stdio_resolve(const char *name);  /* stdio/file slice, or NULL */
+void *qx_scan_resolve(const char *name);   /* scanf slice, or NULL */
 int *qx_shim_errno(void);                  /* the engine's errno storage (src/shim.c) */
 void qx_stdio_write(void *stream, const char *buf, size_t n); /* stdout/stderr -> log, else CRT */
 /* sysv_abi so main() calls it with the same convention it is defined with; these
  * are non-variadic, so the fixed-arg Microsoft->SysV call is a safe thunk. */
 int __attribute__((sysv_abi)) qx_format_selftest(int *total); /* formatter checks; returns failures */
 int qx_stdio_selftest(int *total);          /* stdio round-trip checks; returns failures */
+int __attribute__((sysv_abi)) qx_scan_selftest(int *total); /* scanf checks; returns failures */
 
 /* runtime.c - the native Roblox runtime (work in progress). */
 enum { QX_RUN_NOT_READY = 2 }; /* launch exit code while the core is unfinished */

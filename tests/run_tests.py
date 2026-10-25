@@ -283,10 +283,17 @@ def test_runtime(tmp):
     check("run resolves a stdio symbol through the shim",
           "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
 
-    # The SysV-ABI formatter and the stdio/file round-trip, exercised the way the
-    # engine calls them.
+    scsym = os.path.join(tmp, "sscanf.apk")
+    make_apk(scsym, make_elf_with_symbol(b"sscanf"))
+    run(EXE, "import-apk", winpath(scsym), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("run resolves a scanf symbol through the shim",
+          "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
+
+    # The SysV-ABI formatter, the stdio/file round-trip, and the scanf parser,
+    # each exercised the way the engine calls them.
     r = run(EXE, "selftest", data_dir=data)
-    check("formatter and stdio self-tests pass",
+    check("formatter, stdio and scanf self-tests pass",
           r.returncode == 0 and "self-test total:" in r.stdout and "0 failure(s)" in r.stdout
           and "1 failure" not in r.stdout, str(r.returncode) + r.stdout + r.stderr)
 
