@@ -176,19 +176,23 @@ is expected until the Android framework and graphics phases land.
   emulated) and name resolution (`getnameinfo`/`gethostbyname`). Against the
   real `libroblox.so` the shim resolves 365 of the 637 symbolic relocations,
   and every pending symbol now belongs to the graphics/media families. The
-  **EGL binding layer** (`src/gl.c`) is now in: it loads ANGLE's
-  `libEGL.dll`/`libGLESv2.dll` when present beside the executable and binds the
-  engine's EGL imports to them through SysV&nbsp;→&nbsp;Microsoft ABI thunks,
-  degrading cleanly to pending (no crash) when ANGLE is absent. The EGL symbols
-  therefore stay pending until the ANGLE DLLs are bundled — resolving them is a
-  runtime concern, not a code gap.
+  **graphics binding layer** (`src/gl.c`) is now complete: it loads ANGLE's
+  `libEGL.dll`/`libGLESv2.dll` when present beside the executable (or at
+  `QUARTIX_ANGLE_DIR`) and binds all of the engine's graphics imports — the 17
+  EGL and 74 GLES&nbsp;2.0 entry points — to them through
+  SysV&nbsp;→&nbsp;Microsoft ABI thunks, degrading cleanly to pending (no crash)
+  when ANGLE is absent. The engine imports only GLES&nbsp;2.0 (no VAOs,
+  instancing, map-buffer-range, sync objects or multisample), so a GLES2-capable
+  ANGLE build suffices. These symbols stay pending until the ANGLE DLLs are
+  bundled — resolving them is a runtime concern, not a code gap, and a CI test
+  confirms they resolve against stub DLLs.
 - **Verified on real hardware:** on a Windows&nbsp;7 x64 machine the loader maps
   the three load segments at base `0x21b0000`, applies all 628,016 relative
   relocations, and binds the 637 symbolic relocations (365 resolved, 272
   pending) — identical to the figures produced in CI under Wine.
 - **Next:** bundle a Windows&nbsp;7-compatible ANGLE build so the EGL/GLES path
-  initializes on a real GPU, add the OpenGL&nbsp;ES&nbsp;2 thunks, and the
-  `libmediandk` media layer. See [docs/PLAN.md](docs/PLAN.md).
+  initializes on a real GPU, then the `libmediandk` media layer. See
+  [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 

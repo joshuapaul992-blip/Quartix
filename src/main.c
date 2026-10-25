@@ -94,7 +94,7 @@ int wmain(int argc, wchar_t **argv)
         qx_log("libc self-test:      %d check(s), %d failure(s)", xt, xf);
         qx_log("android self-test:   %d check(s), %d failure(s)", at, af);
         qx_log("socket self-test:    %d check(s), %d failure(s)", kt, kf);
-        qx_log("egl self-test:       %d check(s), %d failure(s)", gt, gf);
+        qx_log("graphics self-test:  %d check(s), %d failure(s)", gt, gf);
         qx_log("self-test total:     %d check(s), %d failure(s)", ft + st + ct + ot + xt + at + kt + gt, ff + sf + cf + of + xf + af + kf + gf);
         return (ff + sf + cf + of + xf + af + kf + gf) ? 1 : 0;
     }

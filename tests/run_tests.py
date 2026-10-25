@@ -348,13 +348,57 @@ def test_runtime(tmp):
     check("an EGL symbol stays pending (binds to the trap) when ANGLE is absent",
           "0 resolved by the shim" in r.stdout and "1 pending" in r.stdout, r.stdout + r.stderr)
 
+    # Prove the ANGLE binding actually resolves EGL + GLES2 against real DLLs,
+    # not just that it degrades when they are absent: build no-op stub
+    # libEGL.dll / libGLESv2.dll exporting the names the engine imports, point
+    # the loader at them with QUARTIX_ANGLE_DIR, and confirm the symbols now
+    # resolve through the shim (the SysV thunks forward to the DLL's exports).
+    cc = os.environ.get("CC", "x86_64-w64-mingw32-gcc")
+    if shutil.which(cc):
+        stubdir = os.path.join(tmp, "angle")
+        os.makedirs(stubdir, exist_ok=True)
+        egl_names = [
+            "eglGetError", "eglGetDisplay", "eglInitialize", "eglTerminate",
+            "eglChooseConfig", "eglGetConfigAttrib", "eglCreateWindowSurface",
+            "eglCreatePbufferSurface", "eglDestroySurface", "eglCreateContext",
+            "eglDestroyContext", "eglMakeCurrent", "eglGetCurrentContext",
+            "eglQuerySurface", "eglSwapBuffers", "eglSwapInterval", "eglGetProcAddress",
+        ]
+        gl_names = ["glClear", "glDrawElements", "glCreateProgram", "glViewport"]
+
+        def build_stub(dll, names):
+            src = os.path.join(tmp, dll.replace(".", "_") + ".c")
+            with open(src, "w") as f:
+                for nm in names:
+                    f.write("__declspec(dllexport) void %s(void){}\n" % nm)
+            subprocess.run([cc, "-shared", "-O2", src, "-o", os.path.join(stubdir, dll)],
+                           check=True)
+
+        build_stub("libEGL.dll", egl_names)
+        build_stub("libGLESv2.dll", gl_names)
+        angle = {"QUARTIX_ANGLE_DIR": winpath(stubdir)}
+
+        run(EXE, "import-apk", winpath(eglsym), data_dir=data)
+        r = run(EXE, "run", data_dir=data, env=angle)
+        check("an EGL symbol resolves through the shim when the ANGLE DLLs are present",
+              "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
+
+        glapk = os.path.join(tmp, "gl.apk")
+        make_apk(glapk, make_elf_with_symbol(b"glClear"))
+        run(EXE, "import-apk", winpath(glapk), data_dir=data)
+        r = run(EXE, "run", data_dir=data, env=angle)
+        check("a GLES2 symbol resolves through the shim when the ANGLE DLLs are present",
+              "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
+    else:
+        print("  (skipping ANGLE-present stub test: %s not found)" % cc)
+
     # The SysV-ABI formatter, the stdio/file round-trip, the scanf parser, the
     # time/memory/process services, the libc completion (math, fortified _chk,
     # UTF-8, runtime glue), the libandroid NativeActivity surface, and the
     # Winsock socket bridge (a loopback TCP round-trip), each exercised the way
     # the engine calls them.
     r = run(EXE, "selftest", data_dir=data)
-    check("formatter, stdio, scanf, os, libc, android and socket self-tests pass",
+    check("formatter, stdio, scanf, os, libc, android, socket and graphics self-tests pass",
           r.returncode == 0 and "self-test total:" in r.stdout and "0 failure(s)" in r.stdout
           and "1 failure" not in r.stdout, str(r.returncode) + r.stdout + r.stderr)
 
