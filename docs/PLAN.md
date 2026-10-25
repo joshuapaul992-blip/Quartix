@@ -72,14 +72,26 @@ real hardware before claiming it works.
    `qx_shim_resolve` returns them and the loader's resolved count rises.
    - *Done:* the pure libc (memory/string, `qsort`/`bsearch` with a SysV-ABI
      comparator, `__errno`, `abort`, `exit`, `getenv`), libm math, non-variadic
-     liblog, and libdl (`dlsym` routes back through the resolver). Against the
-     real `libroblox.so` this resolves **62 of 637** symbolic relocations.
+     liblog, and libdl (`dlsym` routes back through the resolver).
      (Note: Roblox bundles its own allocator, so `malloc`/`free` are not
      imported.)
-   - *Next:* pthreads (44 symbols) onto Win32 threads/CVs/TLS, the variadic
-     `snprintf`/`__android_log_print` family (needs a SysV va_list path), and a
-     handler for the Linux x86-64 syscalls bionic makes underneath (memory,
-     futex, files, time).
+   - *Done:* pthreads and scheduling (`src/thread.c`) — the 44 `pthread_*`
+     symbols plus `sched_*` and `__cxa_thread_atexit_impl`, mapped onto Win32
+     primitives that all exist on the Vista floor: `CRITICAL_SECTION` for
+     mutexes, `CONDITION_VARIABLE` for condition variables, a writer-preferring
+     reader/writer lock built from the two, Win32 threads for `pthread_create`,
+     and fibre-local storage (FLS) — whose per-thread exit callback is the one
+     Win32 mechanism that runs pthread key destructors and C++ `thread_local`
+     teardown. The bionic objects are keyed by address in a side table rather
+     than stored in place, so the static initialisers (`PTHREAD_MUTEX_INITIALIZER`
+     and friends) work without assuming any bionic struct size.
+   - Against the real `libroblox.so` the shim now resolves **115 of 637**
+     symbolic relocations.
+   - *Next:* the variadic `snprintf`/`vsnprintf`/`__android_log_print` family
+     (needs a SysV `va_list` path), the remaining non-variadic libc (file/time/
+     `clock_gettime`, which must share its monotonic base with
+     `pthread_cond_timedwait`), and a handler for the Linux x86-64 syscalls
+     bionic makes underneath (memory, futex, files, time).
 4. **Synthetic JNI / Android framework** — a minimal JNI environment (in the
    spirit of `libjnivm`) so the engine's calls into "Java" for device info,
    networking, windowing and lifecycle resolve to host implementations.

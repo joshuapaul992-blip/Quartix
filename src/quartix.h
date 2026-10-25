@@ -130,6 +130,7 @@ void qx_elf_unload(qx_elf_image *img);
  * to NULL and the loader binds it to a trap that logs and exits if ever called. */
 void *qx_shim_resolve(const char *name); /* real implementation, or NULL */
 void *qx_shim_trap_addr(void);           /* the placeholder trap's address */
+void *qx_thread_resolve(const char *name); /* pthreads/sched slice, or NULL */
 
 /* runtime.c - the native Roblox runtime (work in progress). */
 enum { QX_RUN_NOT_READY = 2 }; /* launch exit code while the core is unfinished */

@@ -172,5 +172,5 @@ void *qx_shim_resolve(const char *name)
     for (i = 0; i < sizeof(g_table) / sizeof(g_table[0]); i++)
         if (strcmp(name, g_table[i].name) == 0)
             return g_table[i].fn;
-    return NULL;
+    return qx_thread_resolve(name);
 }
