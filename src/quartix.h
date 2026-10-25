@@ -135,6 +135,7 @@ void *qx_format_resolve(const char *name); /* variadic printf/log slice, or NULL
 void *qx_stdio_resolve(const char *name);  /* stdio/file slice, or NULL */
 void *qx_scan_resolve(const char *name);   /* scanf slice, or NULL */
 void *qx_os_resolve(const char *name);     /* time/memory/process slice, or NULL */
+void *qx_cstd_resolve(const char *name);   /* libm floats, fortified _chk, wide/ctype, runtime glue, or NULL */
 int *qx_shim_errno(void);                  /* the engine's errno storage (src/shim.c) */
 void qx_stdio_write(void *stream, const char *buf, size_t n); /* stdout/stderr -> log, else CRT */
 /* sysv_abi so main() calls it with the same convention it is defined with; these
@@ -143,6 +144,7 @@ int __attribute__((sysv_abi)) qx_format_selftest(int *total); /* formatter check
 int qx_stdio_selftest(int *total);          /* stdio round-trip checks; returns failures */
 int __attribute__((sysv_abi)) qx_scan_selftest(int *total); /* scanf checks; returns failures */
 int __attribute__((sysv_abi)) qx_os_selftest(int *total);   /* time/memory/process checks; returns failures */
+int __attribute__((sysv_abi)) qx_cstd_selftest(int *total); /* libc-completion checks; returns failures */
 
 /* runtime.c - the native Roblox runtime (work in progress). */
 enum { QX_RUN_NOT_READY = 2 }; /* launch exit code while the core is unfinished */

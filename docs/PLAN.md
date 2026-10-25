@@ -138,12 +138,27 @@ real hardware before claiming it works.
      is based on `GetTickCount64`, the same base `pthread_cond_timedwait` uses in
      `src/thread.c`, so a monotonic deadline the engine computes lines up with the
      wait. An `os` self-test is run in CI.
-   - Against the real `libroblox.so` the shim now resolves **210 of 637**
-     symbolic relocations.
-   - *Next:* the shim's pure-libc surface is now largely covered. The remaining
-     pending symbols are the Android framework ones, which are the next phases:
-     `libandroid` NativeActivity (phase 4), EGL/GLES graphics — vendored from
-     **ANGLE** rather than hand-written (phase 5) — and media/audio (phase 6).
+   - *Done:* the rest of the pure libc/libm surface (`src/cstd.c`) — the `float`
+     math variants (`sinf`/`powf`/…) and hyperbolics, the rounding/decomposition
+     calls (`lround`/`llround` returning the LP64 64-bit value, `modf`,
+     `frexpf`), the bionic `_FORTIFY_SOURCE` helpers (`__memcpy_chk`,
+     `__strcpy_chk`, `__fread_chk`, the `fd_set` `_chk` forms, …) which perform
+     the real operation guarded by the caller-supplied size, real UTF-8
+     `mbrtowc`/`wcrtomb` (reading and writing 32-bit code points, since the
+     engine's `wchar_t` is 32-bit while the host's is 16-bit), the `_l` ctype
+     classifiers, stdlib odds and ends (`atoll`/`strnlen`/`strcasecmp`/`rand`),
+     and the C++/runtime glue the `INIT_ARRAY` constructors touch — a LIFO
+     `__cxa_atexit`/`__cxa_finalize` registry, `__assert`, `_Exit`/`_exit`,
+     `arc4random_buf` (from the Windows CSP), and the no-op-on-Windows calls
+     (`__register_atfork`, `getauxval`, `__system_property_get`). A libc
+     self-test is run in CI.
+   - Against the real `libroblox.so` the shim now resolves **300 of 637**
+     symbolic relocations, and the pure-libc surface is essentially complete.
+   - *Next:* the remaining pending symbols are almost entirely the Android
+     framework families, which are the next phases: `libandroid` NativeActivity
+     (phase 4), EGL/GLES graphics — vendored from **ANGLE** rather than
+     hand-written (phase 5) — and `libmediandk`/audio (phase 6); plus the BSD
+     sockets the engine uses for networking, which get their own Winsock bridge.
 4. **Synthetic JNI / Android framework** — a minimal JNI environment (in the
    spirit of `libjnivm`) so the engine's calls into "Java" for device info,
    networking, windowing and lifecycle resolve to host implementations.

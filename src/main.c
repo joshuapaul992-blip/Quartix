@@ -78,17 +78,19 @@ int wmain(int argc, wchar_t **argv)
         return 0;
     }
     if (wcscmp(argv[1], L"selftest") == 0 && argc == 2) {
-        int ft = 0, st = 0, ct = 0, ot = 0;
+        int ft = 0, st = 0, ct = 0, ot = 0, xt = 0;
         int ff = qx_format_selftest(&ft);
         int sf = qx_stdio_selftest(&st);
         int cf = qx_scan_selftest(&ct);
         int of = qx_os_selftest(&ot);
+        int xf = qx_cstd_selftest(&xt);
         qx_log("formatter self-test: %d check(s), %d failure(s)", ft, ff);
         qx_log("stdio self-test:     %d check(s), %d failure(s)", st, sf);
         qx_log("scanf self-test:     %d check(s), %d failure(s)", ct, cf);
         qx_log("os self-test:        %d check(s), %d failure(s)", ot, of);
-        qx_log("self-test total:     %d check(s), %d failure(s)", ft + st + ct + ot, ff + sf + cf + of);
-        return (ff + sf + cf + of) ? 1 : 0;
+        qx_log("libc self-test:      %d check(s), %d failure(s)", xt, xf);
+        qx_log("self-test total:     %d check(s), %d failure(s)", ft + st + ct + ot + xt, ff + sf + cf + of + xf);
+        return (ff + sf + cf + of + xf) ? 1 : 0;
     }
     if (wcscmp(argv[1], L"apk-ls") == 0 && argc == 3) {
         if (qx_apk_list(argv[2], list_visit, NULL)) {
