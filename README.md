@@ -120,10 +120,14 @@ xvfb-run -a make test WINE=/usr/lib/wine/wine64   # window tests need a display
   inspects the Android native library, and an ELF loader that maps it into memory
   and applies its relocations — including Android's **APS2** packed relocations
   (verified against the real `libroblox.so`: 628,016 applied).
-- **Next:** the runtime core — the SysV-ABI bionic/syscall shim that supplies the
-  585 symbols the engine imports, then the `libandroid` NativeActivity surface,
-  EGL + OpenGL&nbsp;ES&nbsp;2 graphics and input, and audio. See
-  [docs/PLAN.md](docs/PLAN.md).
+- **In progress:** the runtime core — the SysV-ABI bionic/syscall shim that
+  supplies the 585 symbols the engine imports. The libc/libm/liblog/libdl core
+  and the full pthreads + scheduling surface (onto Win32 threads, condition
+  variables and FLS) are done; against the real `libroblox.so` the shim resolves
+  115 of the 637 symbolic relocations.
+- **Next:** the variadic log/printf family, the remaining libc (file/time), the
+  `libandroid` NativeActivity surface, EGL + OpenGL&nbsp;ES&nbsp;2 graphics and
+  input, and audio. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 
