@@ -290,10 +290,24 @@ def test_runtime(tmp):
     check("run resolves a scanf symbol through the shim",
           "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
 
-    # The SysV-ABI formatter, the stdio/file round-trip, and the scanf parser,
-    # each exercised the way the engine calls them.
+    ossym = os.path.join(tmp, "clock_gettime.apk")
+    make_apk(ossym, make_elf_with_symbol(b"clock_gettime"))
+    run(EXE, "import-apk", winpath(ossym), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("run resolves an os/time symbol through the shim",
+          "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
+
+    mmsym = os.path.join(tmp, "mmap.apk")
+    make_apk(mmsym, make_elf_with_symbol(b"mmap"))
+    run(EXE, "import-apk", winpath(mmsym), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("run resolves a memory (mmap) symbol through the shim",
+          "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
+
+    # The SysV-ABI formatter, the stdio/file round-trip, the scanf parser, and
+    # the time/memory/process services, each exercised the way the engine calls them.
     r = run(EXE, "selftest", data_dir=data)
-    check("formatter, stdio and scanf self-tests pass",
+    check("formatter, stdio, scanf and os self-tests pass",
           r.returncode == 0 and "self-test total:" in r.stdout and "0 failure(s)" in r.stdout
           and "1 failure" not in r.stdout, str(r.returncode) + r.stdout + r.stderr)
 

@@ -112,6 +112,37 @@ make check      # verify the image targets NT 6.0 and imports nothing newer
 xvfb-run -a make test WINE=/usr/lib/wine/wine64   # window tests need a display
 ```
 
+## Running it on a real Windows Vista / 7 / 8.1 machine
+
+The build produces a single file, **`build/Quartix.exe`**. It is statically
+linked against the C runtime that ships with Windows (`msvcrt.dll`) and targets
+the NT 6.0 floor, so there is nothing to install first — copy that one `.exe`
+to the test machine and run it.
+
+1. Copy `build/Quartix.exe` to the machine (USB stick, network share, download).
+2. Put it in its own folder; it creates its data under `%APPDATA%\Quartix`.
+3. From a command prompt in that folder:
+   ```
+   Quartix.exe info                     confirm it runs and see where data lands
+   Quartix.exe import-apk roblox.apk    import the x86_64 Roblox APK you provide
+   Quartix.exe run --inspect            check the native library is read correctly
+   Quartix.exe run                      attempt to run (the runtime core is WIP)
+   ```
+
+While the runtime core is still being built, `run` maps and relocates the
+library and then stops with a "not ready" message rather than launching — that
+is expected until the Android framework and graphics phases land.
+
+**What to capture from each test run**, so failures can be diagnosed remotely:
+
+- The full console output of the command (redirect with `Quartix.exe run >
+  out.txt 2>&1`).
+- The Quartix log at **`%APPDATA%\Quartix\logs`**.
+- If `Quartix.exe` crashes, the Windows "Problem Details" (Event Viewer →
+  Windows Logs → Application) or a crash dump from
+  `%LOCALAPPDATA%\CrashDumps` if WER dumps are enabled.
+- Which Windows version and edition (e.g. "Windows 7 Pro x64 SP1") and the GPU.
+
 ## Roadmap
 
 - **Done:** x64 executable for Vista/7/8.1, install/data split, APK import, signed
@@ -127,11 +158,14 @@ xvfb-run -a make test WINE=/usr/lib/wine/wine64   # window tests need a display
   SysV `va_list` formatter that reads the engine's register-passed varargs), and
   the stdio/file surface (`fopen`/`fread`/`fwrite`, raw `open`/`read`/`write`,
   `access`/`mkdir`/`rename`/… backed by the host CRT), filesystem metadata
-  (`stat`/`fstat`), and the `scanf` family. Against the real `libroblox.so` the
-  shim resolves 181 of the 637 symbolic relocations.
-- **Next:** the remaining libc (time), then the Android framework: the
-  `libandroid` NativeActivity surface, EGL + OpenGL&nbsp;ES&nbsp;2 graphics and
-  input, and audio. See [docs/PLAN.md](docs/PLAN.md).
+  (`stat`/`fstat`), the `scanf` family, and the OS services (time and the
+  calendar — `clock_gettime`/`gmtime`/`strftime`/… — virtual memory via
+  `VirtualAlloc`, and `getpid`/`sysconf`/`getcwd`). Against the real
+  `libroblox.so` the shim resolves 210 of the 637 symbolic relocations.
+- **Next:** the Android framework — the `libandroid` NativeActivity surface,
+  then EGL + OpenGL&nbsp;ES&nbsp;2 graphics and input (vendored from
+  [ANGLE](https://github.com/google/angle) rather than hand-written), and audio.
+  See [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 
