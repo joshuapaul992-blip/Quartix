@@ -16,7 +16,7 @@ CFLAGS  += -std=c99 -O2 -Wall -Wextra -Werror -municode -I$(BEARSSL)/inc \
 LDFLAGS += -municode -static-libgcc \
            -Wl,--major-os-version,6,--minor-os-version,0 \
            -Wl,--major-subsystem-version,6,--minor-subsystem-version,0
-LDLIBS  += -lshell32 -lws2_32 -ladvapi32 -lcomctl32 -lcomdlg32 -lgdi32 -luser32
+LDLIBS  += -lshell32 -lws2_32 -liphlpapi -ladvapi32 -lcomctl32 -lcomdlg32 -lgdi32 -luser32
 
 # Ed25519 public key (64 hex chars) that update signatures must verify against.
 # Without one the build refuses all updates. See tools/sign_update.py.

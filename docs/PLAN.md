@@ -164,16 +164,20 @@ real hardware before claiming it works.
      Windows swaps `ai_canonname`/`ai_addr` and uses Windows family values), and
      the `WSAE*` error codes into the engine's `__errno`. Because a Winsock
      socket is not a CRT descriptor, a small registry records which int is a
-     socket so `close`/`read`/`write` route to `closesocket`/`recv`/`send`. A
-     socket self-test runs a loopback TCP round-trip in CI under Wine.
-   - Against the real `libroblox.so` the shim resolves **356 of 637** symbolic
-     relocations; the pure-libc surface, the first Android-framework family, and
-     core networking are in.
-   - *Next:* the remaining pending symbols are the rest of the Android framework
-     — EGL/GLES graphics, vendored from **ANGLE** rather than hand-written
-     (phase 5), and `libmediandk`/audio (phase 6) — plus the remaining
-     scatter/gather socket calls (`sendmsg`/`recvmsg` and the `mmsg` batch forms,
-     `socketpair`, the name-resolution extras), a networking follow-up slice.
+     socket so `close`/`read`/`write` route to `closesocket`/`recv`/`send`. The
+     scatter/gather calls (`sendmsg`/`recvmsg` on `WSASend`/`WSARecv` with the
+     iovec repacked to `WSABUF`, and the `mmsg` batch forms), `socketpair`
+     (loopback-emulated, since Winsock has no `AF_UNIX` before Win10), and name
+     resolution (`getnameinfo`/`gethostbyname`/`if_nametoindex`) complete the
+     surface. A socket self-test runs a loopback TCP round-trip and a
+     `socketpair` scatter/gather round-trip in CI under Wine.
+   - Against the real `libroblox.so` the shim resolves **365 of 637** symbolic
+     relocations. The pure-libc surface, the Android NativeActivity family and
+     all of networking are in; **every remaining pending symbol belongs to the
+     graphics and media families** (EGL/GLES and `libmediandk`).
+   - *Next:* the graphics and media phases below, which are the parts that need
+     a real GPU to validate — EGL/GLES vendored from **ANGLE** (phase 5) and
+     `libmediandk`/audio (phase 6).
 4. **libandroid NativeActivity surface** — *in progress (`src/android.c`).* The
    engine is an NDK NativeActivity app (only **1** JNI symbol, so almost no Java
    VM is needed), so it drives its lifecycle and I/O through the `libandroid` C
