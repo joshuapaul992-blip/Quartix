@@ -152,13 +152,28 @@ real hardware before claiming it works.
      `arc4random_buf` (from the Windows CSP), and the no-op-on-Windows calls
      (`__register_atfork`, `getauxval`, `__system_property_get`). A libc
      self-test is run in CI.
-   - Against the real `libroblox.so` the shim resolves **336 of 637** symbolic
-     relocations; with phase 4 started (below) the pure-libc surface is complete
-     and the first Android-framework family is in.
+   - *Done:* the networking bridge (`src/socket.c`) — the engine's BSD sockets
+     on Winsock2 (`ws2_32`, `WSAPoll` since Vista). The calls match but the
+     constants and structs do not, so it translates both ways: the address
+     family (Linux `AF_INET6` is 10, Windows' 23), the `SOCK_NONBLOCK`/`CLOEXEC`
+     type flags, the `setsockopt`/`getsockopt` levels and option names (plus the
+     `SO_RCVTIMEO`/`SNDTIMEO` timeval↔millisecond form), `poll` (repacking the
+     Linux `pollfd[]` into `WSAPOLLFD` with its 64-bit `SOCKET` and translating
+     the event bits), `select` (Linux 1024-bit `fd_set` mask ↔ Winsock `SOCKET`
+     array), `getaddrinfo` (building a Linux-layout `addrinfo` chain, since
+     Windows swaps `ai_canonname`/`ai_addr` and uses Windows family values), and
+     the `WSAE*` error codes into the engine's `__errno`. Because a Winsock
+     socket is not a CRT descriptor, a small registry records which int is a
+     socket so `close`/`read`/`write` route to `closesocket`/`recv`/`send`. A
+     socket self-test runs a loopback TCP round-trip in CI under Wine.
+   - Against the real `libroblox.so` the shim resolves **356 of 637** symbolic
+     relocations; the pure-libc surface, the first Android-framework family, and
+     core networking are in.
    - *Next:* the remaining pending symbols are the rest of the Android framework
      — EGL/GLES graphics, vendored from **ANGLE** rather than hand-written
-     (phase 5), and `libmediandk`/audio (phase 6) — plus the BSD sockets the
-     engine uses for networking, which get their own Winsock bridge.
+     (phase 5), and `libmediandk`/audio (phase 6) — plus the remaining
+     scatter/gather socket calls (`sendmsg`/`recvmsg` and the `mmsg` batch forms,
+     `socketpair`, the name-resolution extras), a networking follow-up slice.
 4. **libandroid NativeActivity surface** — *in progress (`src/android.c`).* The
    engine is an NDK NativeActivity app (only **1** JNI symbol, so almost no Java
    VM is needed), so it drives its lifecycle and I/O through the `libandroid` C
