@@ -269,6 +269,18 @@ def test_runtime(tmp):
     check("run resolves a pthread symbol through the shim",
           "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
 
+    fmtsym = os.path.join(tmp, "snprintf.apk")
+    make_apk(fmtsym, make_elf_with_symbol(b"snprintf"))
+    run(EXE, "import-apk", winpath(fmtsym), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("run resolves a variadic symbol through the shim",
+          "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
+
+    # The SysV-ABI variadic formatter, exercised the way the engine calls it.
+    r = run(EXE, "selftest", data_dir=data)
+    check("formatter self-test passes",
+          r.returncode == 0 and "0 failure(s)" in r.stdout, str(r.returncode) + r.stdout + r.stderr)
+
     bad = os.path.join(tmp, "notelf.apk")
     make_apk(bad, b"\x7fELF" + b"\xff" * 2000)  # ELF magic, but not a usable ELF
     run(EXE, "import-apk", winpath(bad), data_dir=data)

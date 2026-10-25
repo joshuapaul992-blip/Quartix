@@ -77,6 +77,11 @@ int wmain(int argc, wchar_t **argv)
             qx_log("  soname %s", info.soname);
         return 0;
     }
+    if (wcscmp(argv[1], L"selftest") == 0 && argc == 2) {
+        int total = 0, fails = qx_format_selftest(&total);
+        qx_log("formatter self-test: %d check(s), %d failure(s)", total, fails);
+        return fails ? 1 : 0;
+    }
     if (wcscmp(argv[1], L"apk-ls") == 0 && argc == 3) {
         if (qx_apk_list(argv[2], list_visit, NULL)) {
             qx_err("not a readable APK");
