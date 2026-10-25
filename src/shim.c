@@ -94,6 +94,9 @@ static SYSV void *sh_bsearch(const void *key, const void *base, size_t n, size_t
 /* --- libc: process/runtime --- */
 static int sh_errno_storage; /* single-threaded for now; pthread phase makes it per-thread */
 static SYSV int *sh_errno(void) { return &sh_errno_storage; }
+/* exported so the CRT-backed shims (e.g. src/stdio.c) can propagate host errno
+ * into the location the engine reads through __errno */
+int *qx_shim_errno(void) { return &sh_errno_storage; }
 static SYSV void sh_abort(void) { qx_err("libroblox.so called abort()"); ExitProcess(134); }
 static SYSV void sh_exit(int code) { ExitProcess((UINT)code); }
 static SYSV void sh_stack_chk_fail(void) { qx_err("stack smashing detected in libroblox.so"); ExitProcess(134); }
@@ -189,5 +192,8 @@ void *qx_shim_resolve(const char *name)
     r = qx_thread_resolve(name);
     if (r)
         return r;
-    return qx_format_resolve(name);
+    r = qx_format_resolve(name);
+    if (r)
+        return r;
+    return qx_stdio_resolve(name);
 }

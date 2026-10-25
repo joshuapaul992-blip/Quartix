@@ -276,10 +276,19 @@ def test_runtime(tmp):
     check("run resolves a variadic symbol through the shim",
           "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
 
-    # The SysV-ABI variadic formatter, exercised the way the engine calls it.
+    iosym = os.path.join(tmp, "fopen.apk")
+    make_apk(iosym, make_elf_with_symbol(b"fopen"))
+    run(EXE, "import-apk", winpath(iosym), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("run resolves a stdio symbol through the shim",
+          "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
+
+    # The SysV-ABI formatter and the stdio/file round-trip, exercised the way the
+    # engine calls them.
     r = run(EXE, "selftest", data_dir=data)
-    check("formatter self-test passes",
-          r.returncode == 0 and "0 failure(s)" in r.stdout, str(r.returncode) + r.stdout + r.stderr)
+    check("formatter and stdio self-tests pass",
+          r.returncode == 0 and "self-test total:" in r.stdout and "0 failure(s)" in r.stdout
+          and "1 failure" not in r.stdout, str(r.returncode) + r.stdout + r.stderr)
 
     bad = os.path.join(tmp, "notelf.apk")
     make_apk(bad, b"\x7fELF" + b"\xff" * 2000)  # ELF magic, but not a usable ELF

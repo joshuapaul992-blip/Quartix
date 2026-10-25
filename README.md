@@ -123,13 +123,14 @@ xvfb-run -a make test WINE=/usr/lib/wine/wine64   # window tests need a display
 - **In progress:** the runtime core — the SysV-ABI bionic/syscall shim that
   supplies the 585 symbols the engine imports. Done so far: the
   libc/libm/liblog/libdl core, the full pthreads + scheduling surface (onto
-  Win32 threads, condition variables and FLS), and the variadic printf/log
-  family (a SysV `va_list` formatter that reads the engine's register-passed
-  varargs). Against the real `libroblox.so` the shim resolves 131 of the 637
-  symbolic relocations.
-- **Next:** the stdio FILE surface, the remaining libc (time), the `libandroid`
-  NativeActivity surface, EGL + OpenGL&nbsp;ES&nbsp;2 graphics and input, and
-  audio. See [docs/PLAN.md](docs/PLAN.md).
+  Win32 threads, condition variables and FLS), the variadic printf/log family (a
+  SysV `va_list` formatter that reads the engine's register-passed varargs), and
+  the stdio/file surface (`fopen`/`fread`/`fwrite`, raw `open`/`read`/`write`,
+  `access`/`mkdir`/`rename`/… backed by the host CRT). Against the real
+  `libroblox.so` the shim resolves 171 of the 637 symbolic relocations.
+- **Next:** filesystem metadata (`stat`) and the `scanf` family, the remaining
+  libc (time), the `libandroid` NativeActivity surface, EGL + OpenGL&nbsp;ES&nbsp;2
+  graphics and input, and audio. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 
