@@ -158,14 +158,21 @@ is expected until the Android framework and graphics phases land.
   SysV `va_list` formatter that reads the engine's register-passed varargs), and
   the stdio/file surface (`fopen`/`fread`/`fwrite`, raw `open`/`read`/`write`,
   `access`/`mkdir`/`rename`/… backed by the host CRT), filesystem metadata
-  (`stat`/`fstat`), the `scanf` family, and the OS services (time and the
+  (`stat`/`fstat`), the `scanf` family, the OS services (time and the
   calendar — `clock_gettime`/`gmtime`/`strftime`/… — virtual memory via
-  `VirtualAlloc`, and `getpid`/`sysconf`/`getcwd`). Against the real
-  `libroblox.so` the shim resolves 210 of the 637 symbolic relocations.
+  `VirtualAlloc`, and `getpid`/`sysconf`/`getcwd`), and the rest of the pure
+  libc/libm surface — the `float` math and hyperbolics, the fortified
+  `_FORTIFY_SOURCE` helpers (`__memcpy_chk`/`__strcpy_chk`/…), UTF-8
+  `mbrtowc`/`wcrtomb`, and the runtime glue (`__cxa_atexit`/`__cxa_finalize`,
+  `arc4random_buf`). Against the real `libroblox.so` the shim resolves 300 of
+  the 637 symbolic relocations — the pure-libc surface is now essentially
+  complete.
 - **Next:** the Android framework — the `libandroid` NativeActivity surface,
   then EGL + OpenGL&nbsp;ES&nbsp;2 graphics and input (vendored from
   [ANGLE](https://github.com/google/angle) rather than hand-written), and audio.
-  See [docs/PLAN.md](docs/PLAN.md).
+  The remaining pending symbols are almost entirely those framework families
+  (plus the BSD sockets Roblox uses for networking). See
+  [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 
