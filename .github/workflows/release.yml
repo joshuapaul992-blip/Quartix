@@ -45,7 +45,7 @@ jobs:
           trap 'rm -f "$key"' EXIT
           printf '%s\n' "$QUARTIX_SIGNING_KEY" > "$key"
           make -s
-          python3 tools/check_xp_pe.py build/Quartix.exe
+          python3 tools/check_win_pe.py build/Quartix.exe
           python3 tools/sign_update.py sign "$key" build/Quartix.exe "${{ steps.version.outputs.version }}"
           python3 tools/verify_update.py keys/update_pubkey.txt build/Quartix.exe build/Quartix.exe.sig
       - name: Publish

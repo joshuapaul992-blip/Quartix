@@ -1,4 +1,4 @@
-# Quartix - cross-build for Windows XP x64 (NT 5.2) with mingw-w64 (msvcrt runtime).
+# Quartix - cross-build for Windows Vista/7/8.1 x64 (NT 6.0 floor) with mingw-w64 (msvcrt runtime).
 ifeq ($(origin CC),default)
 CC      = x86_64-w64-mingw32-gcc
 endif
@@ -11,11 +11,11 @@ PYTHON  ?= python3
 
 BEARSSL = third_party/bearssl
 CFLAGS  += -std=c99 -O2 -Wall -Wextra -Werror -municode -I$(BEARSSL)/inc \
-           -D_WIN32_WINNT=0x0502 -DWINVER=0x0502 -D__USE_MINGW_ANSI_STDIO=1
-# Mark the image as runnable on NT 5.2; newer linkers default to 6.0, which XP refuses.
+           -D_WIN32_WINNT=0x0600 -DWINVER=0x0600 -D__USE_MINGW_ANSI_STDIO=1
+# Mark the image for NT 6.0 (Vista): it loads on Vista, 7 and 8.1, and XP refuses it.
 LDFLAGS += -municode -static-libgcc \
-           -Wl,--major-os-version,5,--minor-os-version,2 \
-           -Wl,--major-subsystem-version,5,--minor-subsystem-version,2
+           -Wl,--major-os-version,6,--minor-os-version,0 \
+           -Wl,--major-subsystem-version,6,--minor-subsystem-version,0
 LDLIBS  += -lshell32 -lws2_32 -ladvapi32 -lcomctl32 -lcomdlg32 -lgdi32 -luser32
 
 # Ed25519 public key (64 hex chars) that update signatures must verify against.
@@ -26,7 +26,7 @@ UPDATE_BASE ?= https://github.com/joshuapaul992-blip/Quartix/releases/latest/dow
 # TESTING=1 lets the binary trust an extra CA from QUARTIX_TEST_CA; tests only.
 TESTING ?= 0
 
-SRC = src/main.c src/gui.c src/paths.c src/apk.c src/sha256.c src/update.c src/net.c src/log.c \
+SRC = src/main.c src/gui.c src/paths.c src/apk.c src/elf.c src/runtime.c src/sha256.c src/update.c src/net.c src/log.c \
       src/gen/trust_anchors.c
 MONO = third_party/monocypher/monocypher.c third_party/monocypher/monocypher-ed25519.c
 # Only the inflate half of miniz (tinfl) is used, for deflated entries in APKs and bundles.
@@ -57,14 +57,14 @@ $(OUT): $(SRC) $(MONO) $(MINIZ) src/quartix.h src/version.h res/quartix.rc res/q
 
 build/bearssl/%.o: $(BEARSSL)/src/%.c
 	@mkdir -p $(dir $@)
-	$(CC) -O2 -D_WIN32_WINNT=0x0502 -I$(BEARSSL)/inc -I$(BEARSSL)/src -c $< -o $@
+	$(CC) -O2 -D_WIN32_WINNT=0x0600 -I$(BEARSSL)/inc -I$(BEARSSL)/src -c $< -o $@
 
 $(BEARSSL_LIB): $(BEARSSL_OBJ)
 	rm -f $@
 	$(AR) rcs $@ $^
 
 check: $(OUT)
-	$(PYTHON) tools/check_xp_pe.py $(OUT)
+	$(PYTHON) tools/check_win_pe.py $(OUT)
 
 test: check
 	WINE="$(WINE)" MAKE="$(MAKE)" $(PYTHON) tests/run_tests.py $(OUT)

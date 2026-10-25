@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  windows-xp-x64:
+  windows-vista-7-81-x64:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -13,9 +13,9 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 wine64 python3-cryptography xvfb xauth
-      - name: Build, check XP compatibility, run tests
+      - name: Build, check Vista/7/8.1 compatibility, run tests
         run: xvfb-run -a make -j4 test WINE=/usr/lib/wine/wine64
       - uses: actions/upload-artifact@v4
         with:
-          name: Quartix-xp-x64
+          name: Quartix-vista-7-81-x64
           path: build/Quartix.exe

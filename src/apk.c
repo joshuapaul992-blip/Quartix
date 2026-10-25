@@ -390,6 +390,33 @@ static int import_bundle(const wchar_t *bundle_path, const wchar_t *dir)
     return 0;
 }
 
+/* Resolves apk\current to the extracted libroblox.so of the active import. */
+int qx_apk_current_lib(const qx_paths *p, wchar_t *lib_out, size_t cap)
+{
+    wchar_t path[QX_PATH_MAX], id[32], lib[QX_PATH_MAX];
+    char raw[32];
+    FILE *f;
+    size_t n, i;
+
+    if (qx_path_join(path, QX_PATH_MAX, p->apk_dir, L"current") || !(f = _wfopen(path, L"rb")))
+        return -1;
+    n = fread(raw, 1, sizeof(raw) - 1, f);
+    fclose(f);
+    for (i = 0; i < n && i < 31 && raw[i] != '\n' && raw[i] != '\r'; i++)
+        id[i] = (wchar_t)raw[i];
+    id[i] = 0;
+    if (i == 0)
+        return -1;
+    if (qx_path_join(lib, QX_PATH_MAX, p->apk_dir, id) ||
+        qx_path_join(lib, QX_PATH_MAX, lib, L"lib\\x86_64\\libroblox.so"))
+        return -1;
+    if (GetFileAttributesW(lib) == INVALID_FILE_ATTRIBUTES)
+        return -1;
+    if (lib_out && wcslen(lib) < cap)
+        wcscpy(lib_out, lib);
+    return 0;
+}
+
 /* Copies an APK, or the APKs inside a bundle, into the data dir under a
  * content-addressed folder, extracts the native library and marks it current.
  * Returns the version folder. */
