@@ -138,6 +138,10 @@ void *qx_os_resolve(const char *name);     /* time/memory/process slice, or NULL
 void *qx_cstd_resolve(const char *name);   /* libm floats, fortified _chk, wide/ctype, runtime glue, or NULL */
 void *qx_android_resolve(const char *name); /* libandroid NativeActivity slice, or NULL */
 void *qx_socket_resolve(const char *name);  /* BSD sockets (Winsock) slice, or NULL */
+void *qx_gl_resolve(const char *name);      /* EGL/GLES bound to ANGLE, or NULL when ANGLE is absent */
+void *qx_gl_proc(const char *name);         /* raw ANGLE DLL symbol (Microsoft ABI), or NULL */
+int qx_gl_available(void);                  /* nonzero once the ANGLE DLLs load */
+void qx_gl_set_dir(const wchar_t *dir);     /* directory to load the ANGLE DLLs from */
 /* socket fds are not CRT descriptors, so stdio.c routes close/read/write for them here */
 int qx_socket_is_sock(int fd);
 int qx_socket_close(int fd);
@@ -158,6 +162,7 @@ int __attribute__((sysv_abi)) qx_os_selftest(int *total);   /* time/memory/proce
 int __attribute__((sysv_abi)) qx_cstd_selftest(int *total); /* libc-completion checks; returns failures */
 int __attribute__((sysv_abi)) qx_android_selftest(int *total); /* libandroid surface checks; returns failures */
 int __attribute__((sysv_abi)) qx_socket_selftest(int *total);  /* sockets loopback checks; returns failures */
+int __attribute__((sysv_abi)) qx_gl_selftest(int *total);      /* EGL loader checks; returns failures */
 
 /* runtime.c - the native Roblox runtime (work in progress). */
 enum { QX_RUN_NOT_READY = 2 }; /* launch exit code while the core is unfinished */
