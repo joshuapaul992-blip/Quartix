@@ -318,11 +318,19 @@ def test_runtime(tmp):
     check("run resolves a fortified (_chk) symbol through the shim",
           "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
 
+    asym = os.path.join(tmp, "nativewindow.apk")
+    make_apk(asym, make_elf_with_symbol(b"ANativeWindow_getWidth"))
+    run(EXE, "import-apk", winpath(asym), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("run resolves a libandroid NativeActivity symbol through the shim",
+          "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
+
     # The SysV-ABI formatter, the stdio/file round-trip, the scanf parser, the
-    # time/memory/process services, and the libc completion (math, fortified
-    # _chk, UTF-8, runtime glue), each exercised the way the engine calls them.
+    # time/memory/process services, the libc completion (math, fortified _chk,
+    # UTF-8, runtime glue), and the libandroid NativeActivity surface, each
+    # exercised the way the engine calls them.
     r = run(EXE, "selftest", data_dir=data)
-    check("formatter, stdio, scanf, os and libc self-tests pass",
+    check("formatter, stdio, scanf, os, libc and android self-tests pass",
           r.returncode == 0 and "self-test total:" in r.stdout and "0 failure(s)" in r.stdout
           and "1 failure" not in r.stdout, str(r.returncode) + r.stdout + r.stderr)
 
