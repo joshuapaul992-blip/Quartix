@@ -174,14 +174,20 @@ real hardware before claiming it works.
    - Against the real `libroblox.so` the shim resolves **365 of 637** symbolic
      relocations. The pure-libc surface, the Android NativeActivity family and
      all of networking are in; **every remaining pending symbol belongs to the
-     graphics and media families** (EGL/GLES and `libmediandk`). The **EGL
-     binding layer** (`src/gl.c`) is now in place: it lazily loads ANGLE's
-     `libEGL.dll`/`libGLESv2.dll` from beside the executable, binds the engine's
-     EGL imports through SysV→Microsoft ABI thunks (so ANGLE's `eglGetProcAddress`
-     results are never handed to the engine as raw Microsoft-ABI pointers), and
-     degrades cleanly to *pending* when the DLLs are absent — so these symbols
-     resolve the moment a Windows 7-compatible ANGLE build is bundled beside the
-     exe, with no further code change.
+     graphics and media families** (EGL/GLES and `libmediandk`). The **graphics
+     binding layer** (`src/gl.c`) is now complete: it lazily loads ANGLE's
+     `libEGL.dll`/`libGLESv2.dll` from beside the executable (or from
+     `QUARTIX_ANGLE_DIR`), and binds all of the engine's graphics imports — the
+     **17 EGL and 74 GLES 2.0** entry points — through SysV→Microsoft ABI thunks
+     (so ANGLE's `eglGetProcAddress` results are never handed to the engine as
+     raw Microsoft-ABI pointers). The engine imports only GLES 2.0 core (no VAOs,
+     instancing, map-buffer-range, sync objects or multisample), confirmed by
+     reading its dynamic imports, so a GLES2-capable ANGLE build is enough. The
+     layer degrades cleanly to *pending* when the DLLs are absent — so these
+     symbols resolve the moment a Windows 7-compatible ANGLE build is bundled
+     beside the exe, with no further code change. A CI test builds stub
+     `libEGL.dll`/`libGLESv2.dll` and confirms EGL and GLES names resolve through
+     the shim when they are present.
    - **Validated on real Windows 7 x64 hardware:** the loader maps the three
      load segments at base `0x21b0000`, applies all **628,016** relative
      relocations, and binds the **637** symbolic relocations (365 resolved, 272
@@ -189,8 +195,8 @@ real hardware before claiming it works.
      mapping and relocation passes are correct on a real machine, not just an
      emulator.
    - *Next:* bundle a Windows 7-compatible **ANGLE** build (phase 5) so EGL/GLES
-     initializes on a real GPU, add the GLES2 thunks, then `libmediandk`/audio
-     (phase 6) — the parts that need a real GPU to validate end to end.
+     initializes on a real GPU, then `libmediandk`/audio (phase 6) — the parts
+     that need a real GPU to validate end to end.
 4. **libandroid NativeActivity surface** — *in progress (`src/android.c`).* The
    engine is an NDK NativeActivity app (only **1** JNI symbol, so almost no Java
    VM is needed), so it drives its lifecycle and I/O through the `libandroid` C
