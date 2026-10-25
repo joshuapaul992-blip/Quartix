@@ -8,11 +8,13 @@
 
 static void usage(void)
 {
-    qx_log("Quartix %ls - Roblox APK manager for Windows XP x64", QX_VERSION);
+    qx_log("Quartix %ls - native Roblox client runtime for Windows Vista/7/8.1 x64", QX_VERSION);
     qx_log("usage:");
     qx_log("  quartix                              open the Quartix window");
     qx_log("  quartix info                         show install and data locations");
     qx_log("  quartix import-apk <file>             import the x86_64 Roblox APK or bundle (.apks, .xapk, .apkm)");
+    qx_log("  quartix run                          run the imported Roblox client");
+    qx_log("  quartix run --inspect                inspect the imported native library without running");
     qx_log("  quartix apk-ls <file.apk>            list the entries of an APK");
     qx_log("  quartix update                       download and install the latest signed release");
     qx_log("  quartix update --check               only report whether an update is available");
@@ -53,6 +55,26 @@ int wmain(int argc, wchar_t **argv)
         qx_log("app data %ls", p.app_data_dir);
         qx_log("apks     %ls", p.apk_dir);
         qx_log("updates  %s", qx_update_has_key() ? "signed updates enabled" : "disabled (no signing key in this build)");
+        {
+            wchar_t lib[QX_PATH_MAX];
+            qx_log("client   %s", qx_apk_current_lib(&p, lib, QX_PATH_MAX) == 0 ? "APK imported" : "no APK imported yet");
+        }
+        return 0;
+    }
+    if (wcscmp(argv[1], L"run") == 0 && argc == 2) {
+        int r = qx_runtime_launch(&p);
+        return r == -1 ? 1 : r; /* QX_RUN_NOT_READY (2) while the runtime core is unfinished */
+    }
+    if (wcscmp(argv[1], L"run") == 0 && argc == 3 && wcscmp(argv[2], L"--inspect") == 0) {
+        qx_elf_info info;
+        if (qx_runtime_inspect(&p, &info, NULL, 0))
+            return 1;
+        qx_log("the imported native library is a loadable 64-bit x86-64 ELF");
+        qx_log("  type %d, entry 0x%llx, %u load segment(s), %u needed lib(s)%s",
+               info.type, (unsigned long long)info.entry, info.load_segments,
+               info.needed_count, info.has_tls ? ", TLS" : "");
+        if (info.soname[0])
+            qx_log("  soname %s", info.soname);
         return 0;
     }
     if (wcscmp(argv[1], L"apk-ls") == 0 && argc == 3) {

@@ -156,6 +156,44 @@ def test_bundles(tmp, data, lib):
     check("rejected bundle leaves no folder", not os.path.exists(os.path.join(data, "apk", sha256(noarch)[:16])))
 
 
+def make_elf64_x86_64():
+    """A minimal but valid little-endian ELF64 x86-64 shared object header with
+    one PT_LOAD segment - enough for the runtime inspector to recognise it."""
+    import struct
+    ehdr = (b"\x7fELF" + bytes([2, 1, 1, 0]) + b"\0" * 8 +
+            struct.pack("<HHIQQQIHHHHHH", 3, 62, 1, 0, 64, 0, 0, 64, 56, 1, 0, 0, 0))
+    phdr = struct.pack("<IIQQQQQQ", 1, 5, 0, 0, 0, 120, 120, 0x1000)  # PT_LOAD
+    return ehdr + phdr
+
+
+def test_runtime(tmp):
+    data = os.path.join(tmp, "data")
+
+    r = run(EXE, "run", "--inspect", data_dir=data)
+    check("run --inspect with no APK is rejected", r.returncode != 0 and "import-apk" in r.stderr, r.stderr)
+
+    apk = os.path.join(tmp, "roblox.apk")
+    make_apk(apk, make_elf64_x86_64())
+    r = run(EXE, "import-apk", winpath(apk), data_dir=data)
+    check("runtime test APK imports", r.returncode == 0, r.stdout + r.stderr)
+
+    r = run(EXE, "run", "--inspect", data_dir=data)
+    check("run --inspect recognises the x86-64 ELF",
+          r.returncode == 0 and "64-bit x86-64 ELF" in r.stdout, r.stdout + r.stderr)
+
+    r = run(EXE, "run", data_dir=data)
+    check("run reports the core is unfinished (exit 2)",
+          r.returncode == 2 and "does not start yet" in r.stdout, str(r.returncode) + r.stdout + r.stderr)
+    check("run promises login data is preserved", "preserved" in r.stdout, r.stdout)
+
+    bad = os.path.join(tmp, "notelf.apk")
+    make_apk(bad, b"\x7fELF" + b"\xff" * 2000)  # ELF magic, but not a usable ELF
+    run(EXE, "import-apk", winpath(bad), data_dir=data)
+    r = run(EXE, "run", "--inspect", data_dir=data)
+    check("run --inspect rejects a non-x86-64 library",
+          r.returncode != 0 and "x86-64" in r.stderr, r.stderr)
+
+
 def build(out, pubkey, *extra):
     subprocess.run([os.environ.get("MAKE", "make"), "-s", "OUT=" + out, "UPDATE_PUBKEY=" + pubkey] + list(extra),
                    cwd=ROOT, check=True, capture_output=True)
@@ -501,7 +539,7 @@ def test_gui(tmp):
 
 
 def main():
-    for t in (test_apk, test_update, test_online, test_gui):
+    for t in (test_apk, test_runtime, test_update, test_online, test_gui):
         tmp = tempfile.mkdtemp(prefix="quartix-")
         try:
             t(tmp)

@@ -1,16 +1,17 @@
 /*
- * Quartix - a Roblox APK manager for Windows XP x64.
+ * Quartix - a native Roblox client runtime for Windows Vista / 7 / 8.1 x64.
  * Copyright (C) 2026 Quartix contributors. Licensed under GPLv3 (see LICENSE).
  */
 #ifndef QUARTIX_H
 #define QUARTIX_H
 
-/* Target NT 5.2 (Windows XP x64 / Server 2003). Anything newer must not leak in. */
+/* Target NT 6.0 (Windows Vista x64) as the floor; also runs on 7 (6.1) and
+ * 8.1 (6.3). Nothing newer than the floor may leak in - see tools/check_win_pe.py. */
 #ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0502
+#define _WIN32_WINNT 0x0600
 #endif
 #ifndef WINVER
-#define WINVER 0x0502
+#define WINVER 0x0600
 #endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -79,6 +80,35 @@ int qx_apk_list(const wchar_t *apk_path, qx_apk_visit_fn fn, void *ctx);
 int qx_apk_find(const wchar_t *apk_path, const char *name, qx_apk_entry *out);
 int qx_apk_extract(const wchar_t *apk_path, const qx_apk_entry *e, const wchar_t *dest);
 int qx_apk_import(const qx_paths *p, const wchar_t *apk_path, wchar_t *out_dir, size_t cap);
+/* Resolves the active import (apk\current) to its extracted libroblox.so.
+ * Returns 0 and writes the path to lib_out when one exists, -1 otherwise. */
+int qx_apk_current_lib(const qx_paths *p, wchar_t *lib_out, size_t cap);
+
+/* elf.c - read-only inspection of the Android native library (ELF64). Parses
+ * the header, program headers and dynamic section; it maps and runs nothing. */
+#define QX_ELF_NEEDED_MAX 16
+typedef struct qx_elf_info {
+    int is_elf64_x86_64;                     /* little-endian ELF64 for x86-64 */
+    int type;                                /* ET_* (3 = shared object / PIE) */
+    unsigned machine;                        /* e_machine (62 = x86-64) */
+    uint64_t entry;
+    unsigned load_segments;
+    uint64_t mapped_size;                    /* span of PT_LOAD, memsz */
+    unsigned needed_count;                   /* DT_NEEDED entries */
+    unsigned needed_listed;
+    int has_tls;
+    char soname[256];
+    char needed[QX_ELF_NEEDED_MAX][256];
+} qx_elf_info;
+
+/* 0 when the file was read (inspect is_elf64_x86_64 for whether it is usable);
+ * -1 only when the file cannot be read at all. */
+int qx_elf_read(const wchar_t *path, qx_elf_info *out);
+
+/* runtime.c - the native Roblox runtime (work in progress). */
+enum { QX_RUN_NOT_READY = 2 }; /* launch exit code while the core is unfinished */
+int qx_runtime_inspect(const qx_paths *p, qx_elf_info *info, wchar_t *lib_out, size_t cap);
+int qx_runtime_launch(const qx_paths *p);
 
 /* update.c */
 int qx_update_apply(const qx_paths *p, const wchar_t *staged_exe, const wchar_t *sig_path);
