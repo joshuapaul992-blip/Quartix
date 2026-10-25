@@ -99,6 +99,16 @@ static SYSV void sh_exit(int code) { ExitProcess((UINT)code); }
 static SYSV void sh_stack_chk_fail(void) { qx_err("stack smashing detected in libroblox.so"); ExitProcess(134); }
 static SYSV char *sh_getenv(const char *name) { (void)name; return NULL; }
 
+/* string -> number (non-variadic). atol returns long long because the engine is
+ * LP64, where long is 64-bit (it is 32-bit on this Win64 host). */
+static SYSV double sh_strtod(const char *s, char **e) { return strtod(s, e); }
+static SYSV float sh_strtof(const char *s, char **e) { return strtof(s, e); }
+static SYSV long long sh_strtoll(const char *s, char **e, int b) { return strtoll(s, e, b); }
+static SYSV unsigned long long sh_strtoull(const char *s, char **e, int b) { return strtoull(s, e, b); }
+static SYSV double sh_atof(const char *s) { return atof(s); }
+static SYSV int sh_atoi(const char *s) { return atoi(s); }
+static SYSV long long sh_atol(const char *s) { return strtoll(s, NULL, 10); }
+
 /* --- liblog (non-variadic) --- */
 static SYSV int sh_log_write(int prio, const char *tag, const char *text)
 {
@@ -162,15 +172,22 @@ static const struct shim_sym g_table[] = {
     {"ldexp", (void *)sh_ldexp}, {"sincos", (void *)sh_sincos},
     {"dlsym", (void *)sh_dlsym}, {"dlopen", (void *)sh_dlopen}, {"dlclose", (void *)sh_dlclose},
     {"dlerror", (void *)sh_dlerror}, {"dladdr", (void *)sh_dladdr},
+    {"strtod", (void *)sh_strtod}, {"strtof", (void *)sh_strtof}, {"strtoll", (void *)sh_strtoll},
+    {"strtoull", (void *)sh_strtoull}, {"atof", (void *)sh_atof}, {"atoi", (void *)sh_atoi},
+    {"atol", (void *)sh_atol},
 };
 
 void *qx_shim_resolve(const char *name)
 {
     size_t i;
+    void *r;
     if (!name)
         return NULL;
     for (i = 0; i < sizeof(g_table) / sizeof(g_table[0]); i++)
         if (strcmp(name, g_table[i].name) == 0)
             return g_table[i].fn;
-    return qx_thread_resolve(name);
+    r = qx_thread_resolve(name);
+    if (r)
+        return r;
+    return qx_format_resolve(name);
 }

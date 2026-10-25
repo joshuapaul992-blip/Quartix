@@ -85,10 +85,26 @@ real hardware before claiming it works.
      teardown. The bionic objects are keyed by address in a side table rather
      than stored in place, so the static initialisers (`PTHREAD_MUTEX_INITIALIZER`
      and friends) work without assuming any bionic struct size.
-   - Against the real `libroblox.so` the shim now resolves **115 of 637**
+   - *Done:* the variadic printf/log family (`src/format.c`) — `printf`,
+     `snprintf`, `vsnprintf`, the fortified `__vsnprintf_chk`/`__vsprintf_chk`,
+     `syslog`, `__android_log_print`, `__android_log_assert`, `vasprintf`, plus
+     the non-variadic string-to-number functions (`strtod`/`strtof`/`strtoll`/
+     `strtoull`/`atof`/`atoi`/`atol`). The engine passes varargs System V style
+     (registers + a register save area) while mingw's default `va_list` walks the
+     Microsoft stack convention, so the formatter reads `__builtin_sysv_va_list`
+     through the `sysv`-specific builtins; each function is `sysv_abi` **and**
+     `noinline`, so the SysV-variadic prologue is never inlined into a
+     Microsoft-ABI frame. Because the engine is LP64, `%ld` carries a 64-bit
+     argument (long is 32-bit on this Win64 host), so the length modifier is
+     parsed here to size each `va_arg`; each conversion's rendering is then
+     delegated to the host's mingw ANSI `snprintf`. A `selftest` subcommand runs
+     the formatter the way the engine calls it (a SysV→SysV variadic call) and is
+     checked in CI under Wine.
+   - Against the real `libroblox.so` the shim now resolves **131 of 637**
      symbolic relocations.
-   - *Next:* the variadic `snprintf`/`vsnprintf`/`__android_log_print` family
-     (needs a SysV `va_list` path), the remaining non-variadic libc (file/time/
+   - *Next:* the stdio FILE surface (`fopen`/`fread`/`fwrite`/`fputs`/`stderr`/
+     `stdout` and the raw `open`/`read`/`write`, ~25 symbols, which `fprintf`/
+     `fscanf`/`sscanf` join), the remaining non-variadic libc (time/
      `clock_gettime`, which must share its monotonic base with
      `pthread_cond_timedwait`), and a handler for the Linux x86-64 syscalls
      bionic makes underneath (memory, futex, files, time).

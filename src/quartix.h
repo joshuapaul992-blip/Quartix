@@ -131,6 +131,10 @@ void qx_elf_unload(qx_elf_image *img);
 void *qx_shim_resolve(const char *name); /* real implementation, or NULL */
 void *qx_shim_trap_addr(void);           /* the placeholder trap's address */
 void *qx_thread_resolve(const char *name); /* pthreads/sched slice, or NULL */
+void *qx_format_resolve(const char *name); /* variadic printf/log slice, or NULL */
+/* sysv_abi so main() calls it with the same convention it is defined with; it is
+ * non-variadic, so this fixed-arg Microsoft->SysV call is a safe thunk. */
+int __attribute__((sysv_abi)) qx_format_selftest(int *total); /* formatter checks; returns failures */
 
 /* runtime.c - the native Roblox runtime (work in progress). */
 enum { QX_RUN_NOT_READY = 2 }; /* launch exit code while the core is unfinished */
