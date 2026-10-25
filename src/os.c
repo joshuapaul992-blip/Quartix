@@ -282,6 +282,150 @@ static SYSV int qx_raise(int sig) { (void)sig; return 0; }
 static SYSV void *qx_signal(int sig, void *handler) { (void)sig; (void)handler; return NULL; }
 static SYSV int qx_sigaction(int sig, const void *act, void *old) { (void)sig; (void)act; (void)old; return 0; }
 
+/* ---- process / system queries (stubs where Win32 has no analogue) ---------- */
+#define LX_ENOSYS 38
+#define LX_EPERM 1
+
+static SYSV int qx_getppid(void) { return 1; }
+static SYSV int qx_geteuid(void) { return 0; }
+static SYSV int qx_getpriority(int which, int who) { (void)which; (void)who; return 0; }
+static SYSV int qx_setpriority(int which, int who, int prio) { (void)which; (void)who; (void)prio; return 0; }
+static SYSV int qx_prctl(int opt, ...) { (void)opt; return 0; }
+static SYSV long long qx_ptrace(int req, ...) { (void)req; *qx_shim_errno() = LX_EPERM; return -1; }
+static SYSV long long qx_syscall(long long num, ...) { (void)num; *qx_shim_errno() = LX_ENOSYS; return -1; }
+
+/* struct sysinfo, bionic LP64 layout exactly (the trailing _f[] is empty on
+ * 64-bit, so there is no padding field to zero - and must not be, or we would
+ * write past the engine's smaller stack buffer and trip its stack guard). */
+struct lx_sysinfo {
+    int64_t uptime;
+    uint64_t loads[3];
+    uint64_t totalram, freeram, sharedram, bufferram;
+    uint64_t totalswap, freeswap;
+    uint16_t procs, pad;
+    uint64_t totalhigh, freehigh;
+    uint32_t mem_unit;
+};
+static SYSV int qx_sysinfo(struct lx_sysinfo *si)
+{
+    MEMORYSTATUSEX ms;
+    if (!si)
+        return -1;
+    memset(si, 0, sizeof(*si));
+    si->uptime = (int64_t)(GetTickCount64() / 1000);
+    ms.dwLength = sizeof(ms);
+    if (GlobalMemoryStatusEx(&ms)) {
+        si->totalram = ms.ullTotalPhys;
+        si->freeram = ms.ullAvailPhys;
+        si->totalswap = ms.ullTotalPageFile;
+        si->freeswap = ms.ullAvailPageFile;
+    }
+    si->procs = 1;
+    si->mem_unit = 1;
+    return 0;
+}
+
+/* struct utsname: six NUL-terminated 65-byte fields. */
+struct lx_utsname { char sysname[65], nodename[65], release[65], version[65], machine[65], domainname[65]; };
+static SYSV int qx_uname(struct lx_utsname *u)
+{
+    if (!u)
+        return -1;
+    memset(u, 0, sizeof(*u));
+    strcpy(u->sysname, "Linux");
+    strcpy(u->nodename, "localhost");
+    strcpy(u->release, "4.19.0-quartix");
+    strcpy(u->version, "#1 SMP");
+    strcpy(u->machine, "x86_64");
+    return 0;
+}
+
+static SYSV int qx_gethostname(char *buf, size_t len)
+{
+    const char *h = "localhost";
+    if (!buf || len == 0)
+        return -1;
+    strncpy(buf, h, len);
+    buf[len - 1] = '\0';
+    return 0;
+}
+
+/* struct statvfs (LP64): block/inode counts, filled from the disk Quartix runs
+ * on; the engine mostly reads f_bsize and the free-space counts. */
+struct lx_statvfs {
+    uint64_t f_bsize, f_frsize, f_blocks, f_bfree, f_bavail;
+    uint64_t f_files, f_ffree, f_favail, f_fsid, f_flag, f_namemax;
+    uint32_t __f_spare[6];
+};
+static SYSV int qx_statvfs(const char *path, struct lx_statvfs *s)
+{
+    ULARGE_INTEGER avail, total, freeb;
+    (void)path;
+    if (!s)
+        return -1;
+    memset(s, 0, sizeof(*s));
+    s->f_bsize = s->f_frsize = 4096;
+    s->f_namemax = 255;
+    if (GetDiskFreeSpaceExW(NULL, &avail, &total, &freeb)) {
+        s->f_blocks = total.QuadPart / 4096;
+        s->f_bfree = freeb.QuadPart / 4096;
+        s->f_bavail = avail.QuadPart / 4096;
+    }
+    return 0;
+}
+
+/* ---- virtual memory / file stubs ------------------------------------------- */
+static SYSV int qx_mlock(const void *a, size_t n) { (void)a; (void)n; return 0; }
+static SYSV int qx_munlock(const void *a, size_t n) { (void)a; (void)n; return 0; }
+static SYSV int qx_msync(void *a, size_t n, int f) { (void)a; (void)n; (void)f; return 0; }
+static SYSV void *qx_mremap(void *a, size_t o, size_t nw, int f, ...) { (void)a; (void)o; (void)nw; (void)f; *qx_shim_errno() = LX_ENOSYS; return (void *)-1; }
+static SYSV int qx_posix_fallocate(int fd, int64_t off, int64_t len) { (void)fd; (void)off; (void)len; return 0; }
+static SYSV int qx_ftruncate(int fd, int64_t len) { (void)fd; (void)len; return 0; }
+static SYSV int qx_fchmod(int fd, unsigned mode) { (void)fd; (void)mode; return 0; }
+static SYSV int qx_fchown(int fd, unsigned u, unsigned g) { (void)fd; (void)u; (void)g; return 0; }
+
+/* ---- signals (no POSIX signals on Win32; accept and ignore) ---------------- */
+static SYSV int qx_sigaltstack(const void *ss, void *old) { (void)ss; (void)old; return 0; }
+static SYSV int qx_sigemptyset(uint64_t *set) { if (set) *set = 0; return 0; }
+static SYSV int qx_sigfillset(uint64_t *set) { if (set) *set = ~(uint64_t)0; return 0; }
+
+/* ---- POSIX unnamed semaphores (bionic sem_t is a 4-byte count) ------------- */
+static SYSV int qx_sem_init(volatile long *sem, int pshared, unsigned value)
+{
+    (void)pshared;
+    if (!sem)
+        return -1;
+    *sem = (long)value;
+    return 0;
+}
+static SYSV int qx_sem_wait(volatile long *sem)
+{
+    if (!sem)
+        return -1;
+    for (;;) {
+        long v = *sem;
+        if (v > 0) {
+            if ((long)InterlockedCompareExchange((volatile LONG *)sem, v - 1, v) == v)
+                return 0;
+        } else {
+            Sleep(1); /* yield until a post raises the count */
+        }
+    }
+}
+static SYSV int qx_sem_post(volatile long *sem)
+{
+    if (!sem)
+        return -1;
+    InterlockedIncrement((volatile LONG *)sem);
+    return 0;
+}
+static SYSV int qx_sem_destroy(volatile long *sem) { (void)sem; return 0; }
+
+/* ---- time-zone data globals (bound as data) -------------------------------- */
+static char *g_tzname[2] = { (char *)"UTC", (char *)"UTC" };
+static long g_timezone;   /* seconds west of UTC; 0 = treat local as UTC */
+static int g_daylight;
+
 /* ---- resolver -------------------------------------------------------------- */
 struct os_sym {
     const char *name;
@@ -301,6 +445,24 @@ static const struct os_sym g_os_table[] = {
     {"getpid", (void *)qx_getpid}, {"gettid", (void *)qx_gettid}, {"getuid", (void *)qx_getuid},
     {"sysconf", (void *)qx_sysconf}, {"getcwd", (void *)qx_getcwd},
     {"raise", (void *)qx_raise}, {"signal", (void *)qx_signal}, {"sigaction", (void *)qx_sigaction},
+    /* process / system queries */
+    {"getppid", (void *)qx_getppid}, {"geteuid", (void *)qx_geteuid},
+    {"getpriority", (void *)qx_getpriority}, {"setpriority", (void *)qx_setpriority},
+    {"prctl", (void *)qx_prctl}, {"ptrace", (void *)qx_ptrace}, {"syscall", (void *)qx_syscall},
+    {"sysinfo", (void *)qx_sysinfo}, {"uname", (void *)qx_uname},
+    {"gethostname", (void *)qx_gethostname}, {"statvfs", (void *)qx_statvfs},
+    /* virtual memory / file stubs */
+    {"mlock", (void *)qx_mlock}, {"munlock", (void *)qx_munlock}, {"msync", (void *)qx_msync},
+    {"mremap", (void *)qx_mremap}, {"posix_fallocate", (void *)qx_posix_fallocate},
+    {"ftruncate", (void *)qx_ftruncate}, {"fchmod", (void *)qx_fchmod}, {"fchown", (void *)qx_fchown},
+    /* signals */
+    {"sigaltstack", (void *)qx_sigaltstack}, {"sigemptyset", (void *)qx_sigemptyset},
+    {"sigfillset", (void *)qx_sigfillset},
+    /* semaphores */
+    {"sem_init", (void *)qx_sem_init}, {"sem_wait", (void *)qx_sem_wait},
+    {"sem_post", (void *)qx_sem_post}, {"sem_destroy", (void *)qx_sem_destroy},
+    /* time-zone data globals */
+    {"tzname", (void *)&g_tzname}, {"timezone", (void *)&g_timezone}, {"daylight", (void *)&g_daylight},
 };
 
 void *qx_os_resolve(const char *name)
@@ -388,6 +550,28 @@ SYSV int qx_os_selftest(int *total)
     n++;
     if (qx_getpid() == 0 || qx_gettid() == 0)
         fails++;
+    /* sysinfo reports non-zero RAM and fits bionic's layout (112 bytes LP64) */
+    n++;
+    {
+        struct lx_sysinfo si;
+        if (sizeof(si) != 112 || qx_sysinfo(&si) != 0 || si.totalram == 0 || si.mem_unit != 1)
+            fails++;
+    }
+    /* uname identifies as Linux/x86_64 */
+    n++;
+    {
+        struct lx_utsname u;
+        if (qx_uname(&u) != 0 || strcmp(u.sysname, "Linux") != 0 || strcmp(u.machine, "x86_64") != 0)
+            fails++;
+    }
+    /* an unnamed semaphore counts down and back up */
+    n++;
+    {
+        volatile long s;
+        if (qx_sem_init(&s, 0, 1) != 0 || qx_sem_wait(&s) != 0 || s != 0 ||
+            qx_sem_post(&s) != 0 || s != 1)
+            fails++;
+    }
 
     if (total)
         *total = n;

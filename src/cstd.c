@@ -32,6 +32,7 @@
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
+#include <limits.h>
 #include <wincrypt.h>
 
 #define SYSV __attribute__((sysv_abi))
@@ -400,6 +401,263 @@ static SYSV int qx_system_property_get(const char *name, char *value)
     return 0; /* property not set */
 }
 
+/* ---- locale ----------------------------------------------------------------
+ * The engine is built against bionic, whose locale support is C/C.UTF-8 only.
+ * A locale_t is an opaque handle; we never consult it, so one non-NULL sentinel
+ * stands for every locale and the _l calls behave as the C locale. */
+static int g_locale_sentinel;
+#define QX_LOCALE ((void *)&g_locale_sentinel)
+
+/* NUL-terminated bounded copy (strlcpy semantics), used by the gaps below. */
+static void qx_strlcpy_like(char *d, const char *s, size_t n)
+{
+    size_t i;
+    if (!n)
+        return;
+    for (i = 0; i + 1 < n && s[i]; i++)
+        d[i] = s[i];
+    d[i] = '\0';
+}
+
+static SYSV void *qx_newlocale(int mask, const char *name, void *base)
+{
+    (void)mask; (void)name; (void)base;
+    return QX_LOCALE;
+}
+static SYSV void qx_freelocale(void *loc) { (void)loc; }
+static SYSV void *qx_uselocale(void *loc) { (void)loc; return QX_LOCALE; }
+static SYSV void *qx_duplocale(void *loc) { (void)loc; return QX_LOCALE; }
+
+/* bionic's struct lconv, filled for the C locale (CHAR_MAX = "not specified"). */
+struct qx_lconv {
+    char *decimal_point, *thousands_sep, *grouping;
+    char *int_curr_symbol, *currency_symbol;
+    char *mon_decimal_point, *mon_thousands_sep, *mon_grouping;
+    char *positive_sign, *negative_sign;
+    char int_frac_digits, frac_digits, p_cs_precedes, p_sep_by_space;
+    char n_cs_precedes, n_sep_by_space, p_sign_posn, n_sign_posn;
+    char int_p_cs_precedes, int_p_sep_by_space, int_n_cs_precedes, int_n_sep_by_space;
+    char int_p_sign_posn, int_n_sign_posn;
+};
+static SYSV void *qx_localeconv(void)
+{
+    static char empty[] = "";
+    static char dot[] = ".";
+    static struct qx_lconv lc;
+    static int init;
+    if (!init) {
+        lc.decimal_point = dot;
+        lc.thousands_sep = lc.grouping = empty;
+        lc.int_curr_symbol = lc.currency_symbol = empty;
+        lc.mon_decimal_point = lc.mon_thousands_sep = lc.mon_grouping = empty;
+        lc.positive_sign = lc.negative_sign = empty;
+        lc.int_frac_digits = lc.frac_digits = CHAR_MAX;
+        lc.p_cs_precedes = lc.p_sep_by_space = CHAR_MAX;
+        lc.n_cs_precedes = lc.n_sep_by_space = CHAR_MAX;
+        lc.p_sign_posn = lc.n_sign_posn = CHAR_MAX;
+        lc.int_p_cs_precedes = lc.int_p_sep_by_space = CHAR_MAX;
+        lc.int_n_cs_precedes = lc.int_n_sep_by_space = CHAR_MAX;
+        lc.int_p_sign_posn = lc.int_n_sign_posn = CHAR_MAX;
+        init = 1;
+    }
+    return &lc;
+}
+
+/* _l string/number variants: the locale is ignored (C locale). */
+static SYSV int qx_strcoll_l(const char *a, const char *b, void *l) { (void)l; return strcmp(a, b); }
+static SYSV size_t qx_strxfrm_l(char *d, const char *s, size_t n, void *l)
+{
+    size_t len = strlen(s);
+    (void)l;
+    if (d && n)
+        qx_strlcpy_like(d, s, n);
+    return len;
+}
+static SYSV long long qx_strtoll_l(const char *s, char **e, int b, void *l) { (void)l; return _strtoi64(s, e, b); }
+static SYSV unsigned long long qx_strtoull_l(const char *s, char **e, int b, void *l) { (void)l; return _strtoui64(s, e, b); }
+static SYSV long double qx_strtold_l(const char *s, char **e, void *l) { (void)l; return (long double)strtod(s, e); }
+
+/* _l wide ctype: 32-bit code point, ASCII classified exactly, else false. */
+static SYSV int qx_iswblank_l(uint32_t c, void *l) { (void)l; return (c == ' ' || c == '\t'); }
+static SYSV int qx_iswcntrl_l(uint32_t c, void *l) { (void)l; return c < 0x80 ? iscntrl((int)c) != 0 : 0; }
+static SYSV int qx_iswlower_l(uint32_t c, void *l) { (void)l; return c < 0x80 ? islower((int)c) != 0 : 0; }
+static SYSV int qx_iswprint_l(uint32_t c, void *l) { (void)l; return c < 0x80 ? isprint((int)c) != 0 : 0; }
+static SYSV int qx_iswpunct_l(uint32_t c, void *l) { (void)l; return c < 0x80 ? ispunct((int)c) != 0 : 0; }
+static SYSV int qx_iswupper_l(uint32_t c, void *l) { (void)l; return c < 0x80 ? isupper((int)c) != 0 : 0; }
+static SYSV int qx_iswxdigit_l(uint32_t c, void *l) { (void)l; return c < 0x80 ? isxdigit((int)c) != 0 : 0; }
+
+/* ---- string gaps ----------------------------------------------------------- */
+static SYSV size_t qx_strcspn(const char *s, const char *set) { return strcspn(s, set); }
+static SYSV size_t qx_strspn(const char *s, const char *set) { return strspn(s, set); }
+static SYSV char *qx_strpbrk(const char *s, const char *set) { return strpbrk(s, set); }
+static SYSV char *qx_strncat(char *d, const char *s, size_t n) { return strncat(d, s, n); }
+static SYSV void *qx_memrchr(const void *s, int c, size_t n)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    while (n--)
+        if (p[n] == (unsigned char)c)
+            return (void *)(p + n);
+    return NULL;
+}
+static SYSV char *qx_strerror(int e) { return strerror(e); }
+static SYSV int qx_strerror_r(int e, char *buf, size_t n)
+{
+    /* POSIX (glibc returns int); bionic uses the XSI form. */
+    const char *m = strerror(e);
+    if (!buf || n == 0)
+        return 22; /* EINVAL */
+    qx_strlcpy_like(buf, m, n);
+    return 0;
+}
+/* The GNU variant returns the (possibly internal) string, not an int. */
+static SYSV char *qx_gnu_strerror_r(int e, char *buf, size_t n)
+{
+    (void)qx_strerror_r(e, buf, n);
+    return buf;
+}
+
+/* ---- ctype (base) ---------------------------------------------------------- */
+static SYSV int qx_isspace(int c) { return isspace(c); }
+static SYSV int qx_tolower(int c) { return tolower(c); }
+
+/* ---- wide string (engine wchar_t is 32-bit) -------------------------------- */
+static SYSV size_t qx_wcslen32(const uint32_t *s)
+{
+    size_t n = 0;
+    while (s[n])
+        n++;
+    return n;
+}
+static SYSV void *qx_wmemchr32(const uint32_t *s, uint32_t c, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n; i++)
+        if (s[i] == c)
+            return (void *)(s + i);
+    return NULL;
+}
+static SYSV int qx_wmemcmp32(const uint32_t *a, const uint32_t *b, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n; i++)
+        if (a[i] != b[i])
+            return a[i] < b[i] ? -1 : 1;
+    return 0;
+}
+/* wide _l collation, C locale: code-point order over 32-bit wchar_t. */
+static SYSV int qx_wcscoll_l(const uint32_t *a, const uint32_t *b, void *l)
+{
+    (void)l;
+    while (*a && *a == *b) { a++; b++; }
+    if (*a == *b) return 0;
+    return *a < *b ? -1 : 1;
+}
+static SYSV size_t qx_wcsxfrm_l(uint32_t *d, const uint32_t *s, size_t n, void *l)
+{
+    size_t len = qx_wcslen32(s), i;
+    (void)l;
+    if (d && n) {
+        for (i = 0; i + 1 < n && s[i]; i++)
+            d[i] = s[i];
+        d[i] = 0;
+    }
+    return len;
+}
+
+/* ---- multibyte (UTF-8 <-> 32-bit code points) ------------------------------ */
+static SYSV int qx_mbtowc(uint32_t *out, const char *s, size_t n)
+{
+    size_t r;
+    if (!s)
+        return 0;              /* UTF-8 is stateless */
+    r = qx_mbrtowc(out, s, n, NULL);
+    if (r == (size_t)-1 || r == (size_t)-2)
+        return -1;
+    return (int)r;
+}
+static SYSV size_t qx_mbrlen(const char *s, size_t n, void *st)
+{
+    return qx_mbrtowc(NULL, s, n, st);
+}
+/* Convert a whole string. On success returns the count of code points written
+ * (or that would be written when dst is NULL), advancing *src as POSIX wants. */
+static SYSV size_t qx_mbsnrtowcs(uint32_t *dst, const char **src, size_t nms, size_t len, void *st)
+{
+    size_t out = 0;
+    const char *p = *src;
+    (void)st;
+    while (nms > 0) {
+        uint32_t wc;
+        size_t r = qx_mbrtowc(&wc, p, nms, NULL);
+        if (r == (size_t)-1) return (size_t)-1;
+        if (r == (size_t)-2) break;            /* incomplete tail */
+        if (dst) {
+            if (out >= len) break;
+            dst[out] = wc;
+        }
+        out++;
+        if (wc == 0) {                          /* stop at NUL; clear *src */
+            p = NULL;
+            if (dst) { *src = NULL; return out - 1; }
+            return out - 1;
+        }
+        p += r;
+        nms -= r;
+        if (dst && out >= len) break;
+    }
+    *src = p;
+    return out;
+}
+static SYSV size_t qx_mbsrtowcs(uint32_t *dst, const char **src, size_t len, void *st)
+{
+    return qx_mbsnrtowcs(dst, src, (size_t)-1, len, st);
+}
+static SYSV size_t qx_wcsnrtombs(char *dst, const uint32_t **src, size_t nwc, size_t len, void *st)
+{
+    size_t out = 0;
+    const uint32_t *p = *src;
+    (void)st;
+    while (nwc > 0) {
+        char tmp[4];
+        size_t m = qx_wcrtomb(tmp, *p, NULL);
+        if (*p == 0) {
+            if (dst && out < len) dst[out] = '\0';
+            *src = NULL;
+            return out;
+        }
+        if (dst) {
+            if (out + m > len) break;
+            memcpy(dst + out, tmp, m);
+        }
+        out += m;
+        p++;
+        nwc--;
+    }
+    *src = p;
+    return out;
+}
+
+/* ---- stdlib / math gaps ---------------------------------------------------- */
+/* ldiv_t is { long quot; long rem } and the engine's long is 64-bit, so this
+ * returns a 16-byte struct by value (rax:rdx under SysV). */
+struct qx_ldiv { long long quot, rem; };
+static SYSV struct qx_ldiv qx_ldiv(long long num, long long den)
+{
+    struct qx_ldiv r;
+    r.quot = num / den;
+    r.rem = num % den;
+    return r;
+}
+static SYSV double qx_nan_fn(const char *tag) { (void)tag; return (double)NAN; }
+static SYSV int qx_finitef(float x) { return isfinite(x) != 0; }
+static SYSV float qx_remquof(float x, float y, int *q) { return remquof(x, y, q); }
+
+/* ---- data globals the engine binds directly -------------------------------- *
+ * These are referenced as data (GLOB_DAT), so the resolver returns the address
+ * of a real object, not a function. */
+static char **g_environ;                 /* empty environment */
+static uintptr_t g_stack_chk_guard = (uintptr_t)0x2b7e151628aed2a6ull;
+
 /* ---- resolver -------------------------------------------------------------- */
 struct cstd_sym {
     const char *name;
@@ -451,6 +709,37 @@ static const struct cstd_sym g_cstd_table[] = {
     {"arc4random_buf", (void *)qx_arc4random_buf}, {"arc4random", (void *)qx_arc4random},
     {"__register_atfork", (void *)qx_register_atfork}, {"getauxval", (void *)qx_getauxval},
     {"__system_property_get", (void *)qx_system_property_get},
+    /* locale */
+    {"newlocale", (void *)qx_newlocale}, {"freelocale", (void *)qx_freelocale},
+    {"uselocale", (void *)qx_uselocale}, {"duplocale", (void *)qx_duplocale},
+    {"localeconv", (void *)qx_localeconv},
+    {"strcoll_l", (void *)qx_strcoll_l}, {"strxfrm_l", (void *)qx_strxfrm_l},
+    {"wcscoll_l", (void *)qx_wcscoll_l}, {"wcsxfrm_l", (void *)qx_wcsxfrm_l},
+    {"strtoll_l", (void *)qx_strtoll_l}, {"strtoull_l", (void *)qx_strtoull_l},
+    {"strtold_l", (void *)qx_strtold_l},
+    {"iswblank_l", (void *)qx_iswblank_l}, {"iswcntrl_l", (void *)qx_iswcntrl_l},
+    {"iswlower_l", (void *)qx_iswlower_l}, {"iswprint_l", (void *)qx_iswprint_l},
+    {"iswpunct_l", (void *)qx_iswpunct_l}, {"iswupper_l", (void *)qx_iswupper_l},
+    {"iswxdigit_l", (void *)qx_iswxdigit_l},
+    /* string gaps */
+    {"strcspn", (void *)qx_strcspn}, {"strspn", (void *)qx_strspn},
+    {"strpbrk", (void *)qx_strpbrk}, {"strncat", (void *)qx_strncat},
+    {"memrchr", (void *)qx_memrchr}, {"strerror", (void *)qx_strerror},
+    {"strerror_r", (void *)qx_strerror_r}, {"__gnu_strerror_r", (void *)qx_gnu_strerror_r},
+    /* base ctype */
+    {"isspace", (void *)qx_isspace}, {"tolower", (void *)qx_tolower},
+    /* wide string (32-bit wchar) */
+    {"wcslen", (void *)qx_wcslen32}, {"wmemchr", (void *)qx_wmemchr32},
+    {"wmemcmp", (void *)qx_wmemcmp32},
+    /* multibyte */
+    {"mbtowc", (void *)qx_mbtowc}, {"mbrlen", (void *)qx_mbrlen},
+    {"mbsrtowcs", (void *)qx_mbsrtowcs}, {"mbsnrtowcs", (void *)qx_mbsnrtowcs},
+    {"wcsnrtombs", (void *)qx_wcsnrtombs},
+    /* stdlib / math gaps */
+    {"ldiv", (void *)qx_ldiv}, {"nan", (void *)qx_nan_fn},
+    {"finitef", (void *)qx_finitef}, {"remquof", (void *)qx_remquof},
+    /* data globals (bound as data, not called) */
+    {"environ", (void *)&g_environ}, {"__stack_chk_guard", (void *)&g_stack_chk_guard},
 };
 
 void *qx_cstd_resolve(const char *name)
@@ -546,6 +835,40 @@ SYSV int qx_cstd_selftest(int *total)
     }
     n++;
     if (qx_btowc('A') != 'A' || qx_btowc(0x80) != -1 || qx_ctype_mb_cur_max() != 4)
+        fails++;
+    /* locale/_l variants behave as the C locale */
+    n++;
+    if (qx_newlocale(0, "C", NULL) == NULL || qx_strcoll_l("a", "b", NULL) >= 0 ||
+        qx_iswupper_l('A', NULL) == 0 || qx_iswlower_l('A', NULL) != 0)
+        fails++;
+    /* 32-bit wide string helpers (engine wchar_t is 32-bit) */
+    n++;
+    {
+        static const uint32_t w[] = { 'h', 'e', 'l', 'l', 'o', 0 };
+        static const uint32_t w2[] = { 'h', 'e', 'l', 'p', 0 };
+        if (qx_wcslen32(w) != 5 || qx_wmemchr32(w, 'l', 5) != (void *)(w + 2) ||
+            qx_wmemcmp32(w, w2, 4) >= 0)
+            fails++;
+    }
+    /* mbtowc decodes one UTF-8 code point; memrchr finds the last match */
+    n++;
+    {
+        uint32_t cp = 0;
+        if (qx_mbtowc(&cp, "A", 1) != 1 || cp != 'A' ||
+            qx_memrchr("abcabc", 'b', 6) != (const void *)("abcabc" + 4))
+            fails++;
+    }
+    /* ldiv returns a 64-bit quotient/remainder by value */
+    n++;
+    {
+        struct qx_ldiv d = qx_ldiv(5000000001LL, 1000000000LL);
+        if (d.quot != 5 || d.rem != 1)
+            fails++;
+    }
+    /* string gaps */
+    n++;
+    if (qx_strcspn("hello", "l") != 2 || qx_strspn("aaab", "a") != 3 ||
+        qx_strpbrk("hello", "l") != (char *)("hello" + 2))
         fails++;
     /* stdlib */
     n++;

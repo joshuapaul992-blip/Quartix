@@ -60,9 +60,12 @@ real hardware before claiming it works.
    - Graphics is **OpenGL ES 2 + EGL** (~91 entry points), so the Windows side
      needs a GLES/EGL translation rather than raw desktop GL. Quartix vendors
      **ANGLE** for this (phase 5) instead of writing it by hand.
-   - It is almost entirely NDK-native: only **1** JNI symbol, so very little of a
-     Java VM is required, but it does expect the `libandroid` NativeActivity
-     surface (`ALooper`, `AAssetManager`, `ANativeWindow`, `AInputQueue`, …).
+   - It is a Google **GameActivity** app, not a bare NativeActivity: the entry
+     point is `Java_com_google_androidgamesdk_GameActivity_initializeNativeCode`,
+     and the engine exports **572** `Java_*` native methods across ~40 Java
+     classes. (An earlier reading of this binary as "1 JNI symbol" was wrong.)
+     So it expects a real Java/JNI layer as well as the `libandroid` C surface
+     (`ALooper`, `AAssetManager`, `ANativeWindow`, `AInputQueue`, …).
    - It is linked `BIND_NOW` with 2968 `INIT_ARRAY` initializers that must run
      after relocation, once the shim can satisfy the symbols they touch.
 3. **Linux syscall + bionic shim** — *in progress (`src/shim.c`).* Real,
@@ -194,25 +197,57 @@ real hardware before claiming it works.
      pending) — byte-for-byte the same as CI under Wine, confirming the loader,
      mapping and relocation passes are correct on a real machine, not just an
      emulator.
+   - *Done (the final libc slice that lets the engine's own code run):* the
+     locale machinery C++ static initialisers need (`newlocale`/`uselocale`/
+     `freelocale`/`localeconv` and the `*_l` string/number/ctype variants, all
+     behaving as the C locale), the UTF-8 multibyte family on 32-bit code points
+     (`mbtowc`/`mbrlen`/`mbsrtowcs`/`mbsnrtowcs`/`wcsnrtombs`), the 32-bit-`wchar_t`
+     wide-string helpers (`wcslen`/`wmemchr`/`wmemcmp`/`wcscoll_l`/`wcsxfrm_l`),
+     the remaining string gaps (`strcspn`/`strspn`/`strpbrk`/`strncat`/`memrchr`/
+     `strerror`), `ldiv` (returning a 64-bit LP64 quotient/remainder by value),
+     and a batch of process/system calls that Win32 has no analogue for and that
+     return cleanly (`sysinfo`/`uname`/`statvfs`/`sem_*`/`sigaltstack`/`prctl`/
+     `getppid`/…). Data symbols the engine binds directly (`environ`,
+     `__stack_chk_guard`, `tzname`/`timezone`/`daylight`) resolve to real
+     objects. To find exactly what was still missing, each unresolved import now
+     binds to a **named** trap that logs the symbol by name if the engine ever
+     calls it, which turned the engine into its own to-do list.
    - *Next:* bundle a Windows 7-compatible **ANGLE** build (phase 5) so EGL/GLES
      initializes on a real GPU, then `libmediandk`/audio (phase 6) — the parts
      that need a real GPU to validate end to end.
-4. **libandroid NativeActivity surface** — *in progress (`src/android.c`).* The
-   engine is an NDK NativeActivity app (only **1** JNI symbol, so almost no Java
-   VM is needed), so it drives its lifecycle and I/O through the `libandroid` C
-   API. This slice supplies that surface: `AAssetManager`/`AAsset` (reading a
-   packaged asset into a byte buffer, backed by a filesystem asset root the
-   runtime points at the APK's assets), `AConfiguration` (locale, screen size,
-   density), `ALooper` (a real per-thread event loop whose `pollOnce` waits up
-   to the caller's timeout), `ANativeWindow` (a refcounted handle reporting its
-   dimensions; binding it to a real `HWND`/EGL surface is phase 5), and the
-   graphics-interop objects `AHardwareBuffer`/`AImageReader`/`AImage` (safe
-   placeholders until the graphics phase). These are framework entry points:
-   they resolve and are validated structurally (an `android` self-test exercises
-   the asset/config/looper/window mechanics in CI), with their full behavior
-   exercised once the window and ANGLE land and the client runs on real
-   hardware. A tiny synthetic JNI shim for the single JNI symbol and the
-   `ANativeActivity` glue lands alongside the window in phase 5.
+4. **Synthetic Java VM + libandroid surface** — *in progress (`src/jni.c`,
+   `src/android.c`).* The engine is a **GameActivity** app with a real Java
+   layer (572 `Java_*` native methods), so it needs both a JNI implementation
+   and the `libandroid` C surface.
+   - *Done — the synthetic JNI (`src/jni.c`):* a stand-in `JavaVM`/`JNIEnv`
+     whose function tables follow the JNI 1.6 ABI exactly (the 4 reserved slots
+     + 229 functions of `JNINativeInterface_`, and the `JNIInvokeInterface_`),
+     since the engine indexes the table by slot offset. Every `JNIEnv` call
+     **logs itself**, so pointing it at the engine prints the real sequence of
+     Java-layer calls the engine makes at startup. The loader now also retains
+     the engine's symbol table (`qx_elf_sym`) and runs its **2,968**
+     `DT_INIT_ARRAY` C++ constructors before any entry point. A `jnitest`
+     subcommand loads the image, runs the constructors, finds `JNI_OnLoad` and
+     the GameActivity init, and calls `JNI_OnLoad` with the synthetic VM.
+   - **Milestone reached:** against the real `libroblox.so`, the constructors
+     complete and `JNI_OnLoad` runs the engine's own `JNIMain`, which then calls
+     into its Java interfaces — `NativeLocaleJavaInterface` (locale strings),
+     `NativeUserJavaInterface` (user id / name / membership / theme),
+     `LoggingProtocol`, and `NativeGLJavaInterface.getDeviceStaticParams` — and
+     emits its own log output. This is the first time engine code drives.
+   - *Next:* implement those Java interfaces to return real values (a populated
+     `DeviceStaticParams`, locale strings, a user stub) so the engine proceeds
+     past device setup, then drive the GameActivity lifecycle.
+   - *Done — the `libandroid` C surface (`src/android.c`):* `AAssetManager`/
+     `AAsset` (reading a packaged asset into a byte buffer, backed by a
+     filesystem asset root the runtime points at the APK's assets),
+     `AConfiguration` (locale, screen size, density), `ALooper` (a real
+     per-thread event loop whose `pollOnce` waits up to the caller's timeout),
+     `ANativeWindow` (a refcounted handle reporting its dimensions; binding it to
+     a real `HWND`/EGL surface is phase 5), and the graphics-interop objects
+     `AHardwareBuffer`/`AImageReader`/`AImage` (safe placeholders until the
+     graphics phase). An `android` self-test exercises the asset/config/looper/
+     window mechanics in CI.
 5. **Graphics + input** — the engine draws with **OpenGL ES 2 + EGL** (~91 entry
    points). Rather than hand-write a GLES→desktop translation, Quartix vendors
    **[ANGLE](https://github.com/google/angle)**, Google's production GLES/EGL
