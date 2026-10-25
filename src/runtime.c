@@ -94,3 +94,75 @@ int qx_runtime_launch(const qx_paths *p)
     qx_log("Login data in %ls is preserved across every build.", p->app_data_dir);
     return QX_RUN_NOT_READY;
 }
+
+/*
+ * Phase-4 discovery: map the engine, run its C++ constructors, and call its
+ * JNI_OnLoad against Quartix's synthetic JavaVM. Every JNIEnv call the engine
+ * makes logs itself, so this prints the real sequence of Java-layer calls the
+ * engine expects at startup - the map we build the rest of the JNI layer from.
+ *
+ * Each stage is logged before it runs, so if the engine traps on a symbol
+ * Quartix does not implement yet (or faults in a constructor), the log still
+ * shows exactly how far startup got.
+ */
+int qx_runtime_jnitest(const qx_paths *p)
+{
+    qx_elf_info info;
+    qx_elf_image img;
+    wchar_t lib[QX_PATH_MAX];
+    void *jni_onload, *gameactivity;
+    int version;
+
+    if (qx_runtime_inspect(p, &info, lib, QX_PATH_MAX))
+        return -1;
+    if (qx_elf_load(lib, &img)) {
+        qx_err("could not map the native library: %s", qx_last_error());
+        return -1;
+    }
+    qx_log("mapped at base 0x%llx; %u relative + %u symbolic reloc(s) (%u pending)",
+           (unsigned long long)(uintptr_t)img.base, img.relative_relocs,
+           img.symbolic_relocs, img.symbolic_relocs - img.symbolic_resolved);
+
+    /* Locate the entry points before running anything, so we know they exist. */
+    jni_onload = qx_elf_sym(&img, "JNI_OnLoad");
+    gameactivity = qx_elf_sym(&img,
+        "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode");
+    qx_log("JNI_OnLoad           %s", jni_onload ? "found" : "NOT found");
+    qx_log("GameActivity init    %s", gameactivity ? "found" : "NOT found");
+    if (jni_onload)
+        qx_log("  JNI_OnLoad at 0x%llx", (unsigned long long)(uintptr_t)jni_onload);
+
+    /* With QUARTIX_DUMP_PENDING set, list every still-unimplemented import so we
+     * can plan what to build next, then stop before running anything. */
+    if (GetEnvironmentVariableW(L"QUARTIX_DUMP_PENDING", NULL, 0) > 0) {
+        int n;
+        qx_log("");
+        n = qx_shim_dump_pending();
+        qx_log("%d symbol(s) still unimplemented", n);
+        qx_elf_unload(&img);
+        return 0;
+    }
+
+    /* Run the engine's static constructors. This is where global C++ objects
+     * are built; it must happen before JNI_OnLoad. */
+    qx_log("");
+    qx_log("running %llu constructor(s) (DT_INIT%s + DT_INIT_ARRAY)...",
+           (unsigned long long)(img.init_array_n + (img.init_func ? 1 : 0)),
+           img.init_func ? "" : " absent");
+    qx_elf_run_init(&img);
+    qx_log("constructors returned");
+
+    if (!jni_onload) {
+        qx_log("no JNI_OnLoad to call; stopping after constructors");
+        qx_elf_unload(&img);
+        return QX_RUN_NOT_READY;
+    }
+
+    qx_log("");
+    qx_log("calling JNI_OnLoad with the synthetic JavaVM...");
+    version = qx_jni_call_onload(jni_onload);
+    qx_log("JNI_OnLoad returned 0x%x", (unsigned)version);
+
+    qx_elf_unload(&img);
+    return 0;
+}

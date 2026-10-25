@@ -33,6 +33,81 @@ static SYSV void qx_shim_trap(void)
 
 void *qx_shim_trap_addr(void) { return (void *)qx_shim_trap; }
 
+/*
+ * A named trap: so that when the engine calls a symbol Quartix has not
+ * implemented, the log says exactly which one - the single most useful fact for
+ * deciding what to build next. Each unresolved symbol gets its own tiny code
+ * stub that records the symbol's name and jumps to the handler below. The names
+ * point into the mapped image's string table, which outlives startup, so they
+ * need no copy. Stubs are generated into one executable page, deduplicated by
+ * name. If the table fills or the page cannot be allocated, we fall back to the
+ * anonymous trap - the image is still complete.
+ */
+static const volatile char *g_trap_hit;      /* name of the symbol last trapped on */
+
+static SYSV void qx_shim_trap_report(void)
+{
+    const char *n = (const char *)g_trap_hit;
+    qx_err("libroblox.so called an unimplemented Android symbol: %s", n ? n : "(unknown)");
+    ExitProcess(3);
+}
+
+#define QX_NAMED_TRAP_CAP 512
+#define QX_NAMED_TRAP_STUB 32
+static const char *g_trap_names[QX_NAMED_TRAP_CAP];
+static unsigned char *g_trap_page;   /* QX_NAMED_TRAP_CAP * QX_NAMED_TRAP_STUB bytes, RX */
+static int g_trap_n;
+
+void *qx_shim_named_trap(const char *name)
+{
+    int i;
+    unsigned char *s;
+    uint64_t name_ptr, store_ptr, handler;
+
+    if (!name)
+        return qx_shim_trap_addr();
+    for (i = 0; i < g_trap_n; i++)          /* dedup: one stub per symbol */
+        if (strcmp(g_trap_names[i], name) == 0)
+            return g_trap_page + (size_t)i * QX_NAMED_TRAP_STUB;
+    if (g_trap_n >= QX_NAMED_TRAP_CAP)
+        return qx_shim_trap_addr();
+    if (!g_trap_page) {
+        g_trap_page = (unsigned char *)VirtualAlloc(
+            NULL, (SIZE_T)QX_NAMED_TRAP_CAP * QX_NAMED_TRAP_STUB,
+            MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+        if (!g_trap_page)
+            return qx_shim_trap_addr();
+    }
+
+    /* Emit, for this symbol's stub:
+     *   movabs rax, name          48 B8 <imm64>
+     *   mov    [&g_trap_hit], rax 48 A3 <abs64>   (store the name)
+     *   movabs rax, handler       48 B8 <imm64>
+     *   jmp    rax                FF E0
+     * The stub never returns, so clobbering rax is harmless. */
+    s = g_trap_page + (size_t)g_trap_n * QX_NAMED_TRAP_STUB;
+    name_ptr = (uint64_t)(uintptr_t)name;
+    store_ptr = (uint64_t)(uintptr_t)&g_trap_hit;
+    handler = (uint64_t)(uintptr_t)qx_shim_trap_report;
+    s[0] = 0x48; s[1] = 0xB8; memcpy(s + 2, &name_ptr, 8);
+    s[10] = 0x48; s[11] = 0xA3; memcpy(s + 12, &store_ptr, 8);
+    s[20] = 0x48; s[21] = 0xB8; memcpy(s + 22, &handler, 8);
+    s[30] = 0xFF; s[31] = 0xE0;
+
+    g_trap_names[g_trap_n] = name;
+    return g_trap_page + (size_t)g_trap_n++ * QX_NAMED_TRAP_STUB;
+}
+
+/* List every symbol currently bound to a trap (i.e. imported but not yet
+ * implemented). Discovery aid; returns the count. */
+int qx_shim_dump_pending(void)
+{
+    int i;
+    for (i = 0; i < g_trap_n; i++)
+        qx_log("  pending: %s", g_trap_names[i]);
+    return g_trap_n;
+}
+
 /* --- libc: memory and strings (pure) --- */
 static SYSV void *sh_memcpy(void *d, const void *s, size_t n) { return memcpy(d, s, n); }
 static SYSV void *sh_memmove(void *d, const void *s, size_t n) { return memmove(d, s, n); }

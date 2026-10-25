@@ -247,6 +247,8 @@ static SYSV int qx_open(const char *path, int flags, int mode)
         carry_errno();
     return fd;
 }
+/* bionic's _FORTIFY_SOURCE open(): the two-arg form, no mode. */
+static SYSV int qx_open_2(const char *path, int flags) { return qx_open(path, flags, 0); }
 static SYSV int qx_close(int fd)
 {
     int r;
@@ -450,7 +452,8 @@ static const struct io_sym g_io_table[] = {
     {"fputc", (void *)qx_fputc}, {"fputs", (void *)qx_fputs}, {"getc", (void *)qx_getc},
     {"puts", (void *)qx_puts}, {"fseek", (void *)qx_fseek}, {"ftell", (void *)qx_ftell},
     {"setvbuf", (void *)qx_setvbuf},
-    {"open", (void *)qx_open}, {"close", (void *)qx_close}, {"read", (void *)qx_read},
+    {"open", (void *)qx_open}, {"__open_2", (void *)qx_open_2},
+    {"close", (void *)qx_close}, {"read", (void *)qx_read},
     {"write", (void *)qx_write}, {"lseek", (void *)qx_lseek},
     {"access", (void *)qx_access}, {"mkdir", (void *)qx_mkdir}, {"remove", (void *)qx_remove},
     {"rename", (void *)qx_rename}, {"unlink", (void *)qx_unlink}, {"ungetc", (void *)qx_ungetc},

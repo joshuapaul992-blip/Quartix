@@ -120,16 +120,31 @@ typedef struct qx_elf_image {
     unsigned symbolic_relocs;  /* GLOB_DAT/JUMP_SLOT/64 total */
     unsigned symbolic_resolved;/* bound to a real shim implementation */
     unsigned other_relocs;     /* unexpected relocation types */
+    /* Retained after load so the engine's own exports can be called and its
+     * C++ constructors run. All are absolute pointers into the mapped image. */
+    const uint8_t *dynsym;     /* .dynsym (ELF64 Sym array), or NULL */
+    const char *dynstr;        /* .dynstr string table, or NULL */
+    uint64_t nsyms;            /* number of entries in dynsym */
+    uint64_t init_array;       /* absolute addr of DT_INIT_ARRAY, or 0 */
+    uint64_t init_array_n;     /* number of function pointers in it */
+    uint64_t init_func;        /* absolute addr of DT_INIT, or 0 */
 } qx_elf_image;
 
 int qx_elf_load(const wchar_t *path, qx_elf_image *out);
 void qx_elf_unload(qx_elf_image *img);
+/* Address of an exported (defined) symbol in a loaded image, or NULL. */
+void *qx_elf_sym(const qx_elf_image *img, const char *name);
+/* Run the engine's DT_INIT then DT_INIT_ARRAY constructors (call once, after
+ * loading and before any other engine entry point). */
+void qx_elf_run_init(const qx_elf_image *img);
 
 /* shim.c - resolver for the Android/libc symbols libroblox.so imports. Real,
  * SysV-ABI implementations arrive in later phases; until then a name resolves
  * to NULL and the loader binds it to a trap that logs and exits if ever called. */
 void *qx_shim_resolve(const char *name); /* real implementation, or NULL */
 void *qx_shim_trap_addr(void);           /* the placeholder trap's address */
+void *qx_shim_named_trap(const char *name); /* a trap that names the missing symbol when hit */
+int qx_shim_dump_pending(void);             /* log every still-unimplemented symbol; returns the count */
 void *qx_thread_resolve(const char *name); /* pthreads/sched slice, or NULL */
 void *qx_format_resolve(const char *name); /* variadic printf/log slice, or NULL */
 void *qx_stdio_resolve(const char *name);  /* stdio/file slice, or NULL */
@@ -143,6 +158,10 @@ void *qx_gl_proc(const char *name);         /* raw ANGLE DLL symbol (Microsoft A
 int qx_gl_available(void);                  /* nonzero once the ANGLE DLLs load */
 void qx_gl_set_dir(const wchar_t *dir);     /* directory to load the ANGLE DLLs from */
 int qx_gl_smoketest(void);                  /* gltest.c: drive ANGLE->D3D on the GPU; 0 on success */
+/* jni.c - the synthetic Java VM the GameActivity engine is linked against. */
+void *qx_jni_javavm(void);                  /* the stand-in JavaVM* (JNIInvokeInterface) */
+void *qx_jni_env(void);                     /* the stand-in JNIEnv* for the calling thread */
+int qx_jni_call_onload(void *jni_onload);   /* call the engine's JNI_OnLoad; returns its version or -1 */
 /* socket fds are not CRT descriptors, so stdio.c routes close/read/write for them here */
 int qx_socket_is_sock(int fd);
 int qx_socket_close(int fd);
@@ -169,6 +188,7 @@ int __attribute__((sysv_abi)) qx_gl_selftest(int *total);      /* EGL loader che
 enum { QX_RUN_NOT_READY = 2 }; /* launch exit code while the core is unfinished */
 int qx_runtime_inspect(const qx_paths *p, qx_elf_info *info, wchar_t *lib_out, size_t cap);
 int qx_runtime_launch(const qx_paths *p);
+int qx_runtime_jnitest(const qx_paths *p);  /* load, run constructors, call JNI_OnLoad (discovery) */
 
 /* update.c */
 int qx_update_apply(const qx_paths *p, const wchar_t *staged_exe, const wchar_t *sig_path);

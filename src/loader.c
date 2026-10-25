@@ -35,8 +35,12 @@
 #define DT_RELA 7
 #define DT_RELASZ 8
 #define DT_STRSZ 10
+#define DT_INIT 12
+#define DT_INIT_ARRAY 25
+#define DT_INIT_ARRAYSZ 27
 #define DT_JMPREL 23
 #define DT_PLTRELSZ 2
+#define SHN_UNDEF 0
 #define DT_ANDROID_RELA 0x60000011
 #define DT_ANDROID_RELASZ 0x60000012
 #define R_X86_64_64 1
@@ -103,7 +107,9 @@ static void *resolve_symbol(struct reloc_ctx *c, uint32_t sym, int *resolved)
         *resolved = 1;
         return addr;
     }
-    return qx_shim_trap_addr(); /* complete the image; traps if ever called */
+    /* Not implemented yet: bind to a trap that names this symbol if ever
+     * called, so the log points straight at what to build next. */
+    return qx_shim_named_trap(name);
 }
 
 /* Apply one relocation given its decoded fields. */
@@ -314,6 +320,7 @@ int qx_elf_load(const wchar_t *path, qx_elf_image *out)
             uint64_t n = dyn_filesz / 16, k;
             uint64_t rela_va = 0, rela_sz = 0, andrela_va = 0, andrela_sz = 0;
             uint64_t jmprel_va = 0, pltrel_sz = 0, symtab_va = 0, strtab_va = 0, strsz = 0;
+            uint64_t init_va = 0, init_arr_va = 0, init_arr_sz = 0;
             for (k = 0; k < n; k++) {
                 uint64_t tag = rd64(dyn + k * 16), val = rd64(dyn + k * 16 + 8);
                 if (tag == DT_NULL) break;
@@ -326,6 +333,9 @@ int qx_elf_load(const wchar_t *path, qx_elf_image *out)
                 else if (tag == DT_SYMTAB) symtab_va = val;
                 else if (tag == DT_STRTAB) strtab_va = val;
                 else if (tag == DT_STRSZ) strsz = val;
+                else if (tag == DT_INIT) init_va = val;
+                else if (tag == DT_INIT_ARRAY) init_arr_va = val;
+                else if (tag == DT_INIT_ARRAYSZ) init_arr_sz = val;
             }
             memset(&c, 0, sizeof(c));
             c.img = out;
@@ -347,6 +357,26 @@ int qx_elf_load(const wchar_t *path, qx_elf_image *out)
             apply_rela(&c, rela_va, rela_sz);
             apply_android_rela(&c, andrela_va, andrela_sz);
             apply_rela(&c, jmprel_va, pltrel_sz);
+
+            /* Retain the symbol table so the engine's own exports can be found.
+             * The dynamic section gives no symbol count; the symtab runs up to
+             * the string table (the usual layout), so derive it from there. */
+            out->dynsym = c.symtab;
+            out->dynstr = c.strtab;
+            if (c.symtab && strtab_va > symtab_va)
+                out->nsyms = (strtab_va - symtab_va) / 24;
+            else if (c.symtab)
+                out->nsyms = c.symtab_bytes / 24;
+
+            /* Constructors, as absolute addresses in the mapped image. The
+             * init-array entries themselves were relocated to absolute pointers
+             * by the R_X86_64_RELATIVE pass above. */
+            if (init_va)
+                out->init_func = out->bias + init_va;
+            if (init_arr_va && init_arr_sz >= 8) {
+                out->init_array = out->bias + init_arr_va;
+                out->init_array_n = init_arr_sz / 8;
+            }
         }
         free(dyn);
     }
@@ -377,6 +407,53 @@ fail_mapped:
 fail:
     fclose(f);
     return -1;
+}
+
+/* Look up a defined, exported symbol by name. ELF64 Sym is 24 bytes:
+ * st_name(4) st_info(1) st_other(1) st_shndx(2) st_value(8) st_size(8).
+ * A linear scan is fine: it runs once at startup to find JNI_OnLoad etc. */
+void *qx_elf_sym(const qx_elf_image *img, const char *name)
+{
+    uint64_t i;
+    if (!img || !img->base || !img->dynsym || !img->dynstr || !name)
+        return NULL;
+    for (i = 0; i < img->nsyms; i++) {
+        const uint8_t *sym = img->dynsym + i * 24;
+        uint32_t st_name = rd32(sym);
+        uint16_t st_shndx = rd16(sym + 6);
+        uint64_t st_value;
+        if (st_shndx == SHN_UNDEF)       /* imported, not defined here */
+            continue;
+        if (strcmp(img->dynstr + st_name, name) != 0)
+            continue;
+        st_value = rd64(sym + 8);
+        return (void *)(uintptr_t)(img->bias + st_value);
+    }
+    return NULL;
+}
+
+/* Run the engine's C++ static constructors: DT_INIT first (if present), then
+ * each DT_INIT_ARRAY entry in order. They are void(void) SysV functions; the
+ * array holds absolute addresses after relocation. Must run before any other
+ * engine entry point or global objects are uninitialized. */
+void qx_elf_run_init(const qx_elf_image *img)
+{
+    uint64_t i;
+    if (!img || !img->base)
+        return;
+    if (img->init_func) {
+        void (__attribute__((sysv_abi)) *fn)(void) =
+            (void (__attribute__((sysv_abi)) *)(void))(uintptr_t)img->init_func;
+        fn();
+    }
+    for (i = 0; i < img->init_array_n; i++) {
+        uint64_t addr = rd64((const uint8_t *)(uintptr_t)(img->init_array + i * 8));
+        if (addr) {
+            void (__attribute__((sysv_abi)) *fn)(void) =
+                (void (__attribute__((sysv_abi)) *)(void))(uintptr_t)addr;
+            fn();
+        }
+    }
 }
 
 void qx_elf_unload(qx_elf_image *img)

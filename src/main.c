@@ -16,6 +16,7 @@ static void usage(void)
     qx_log("  quartix run                          run the imported Roblox client");
     qx_log("  quartix run --inspect                inspect the imported native library without running");
     qx_log("  quartix gltest                       test the ANGLE graphics path (needs the ANGLE DLLs)");
+    qx_log("  quartix jnitest                      run the engine's constructors and JNI_OnLoad (discovery)");
     qx_log("  quartix apk-ls <file.apk>            list the entries of an APK");
     qx_log("  quartix update                       download and install the latest signed release");
     qx_log("  quartix update --check               only report whether an update is available");
@@ -80,6 +81,10 @@ int wmain(int argc, wchar_t **argv)
     }
     if (wcscmp(argv[1], L"gltest") == 0 && argc == 2)
         return qx_gl_smoketest();
+    if (wcscmp(argv[1], L"jnitest") == 0 && argc == 2) {
+        int r = qx_runtime_jnitest(&p);
+        return r == -1 ? 1 : r;
+    }
     if (wcscmp(argv[1], L"selftest") == 0 && argc == 2) {
         int ft = 0, st = 0, ct = 0, ot = 0, xt = 0, at = 0, kt = 0, gt = 0;
         int ff = qx_format_selftest(&ft);
