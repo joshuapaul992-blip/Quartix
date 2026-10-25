@@ -144,6 +144,7 @@ void qx_elf_run_init(const qx_elf_image *img);
 void *qx_shim_resolve(const char *name); /* real implementation, or NULL */
 void *qx_shim_trap_addr(void);           /* the placeholder trap's address */
 void *qx_shim_named_trap(const char *name); /* a trap that names the missing symbol when hit */
+void *qx_shim_named_data(const char *name); /* zeroed R/W storage for an unimplemented data symbol */
 int qx_shim_dump_pending(void);             /* log every still-unimplemented symbol; returns the count */
 void *qx_thread_resolve(const char *name); /* pthreads/sched slice, or NULL */
 void *qx_format_resolve(const char *name); /* variadic printf/log slice, or NULL */
