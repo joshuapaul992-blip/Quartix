@@ -81,13 +81,15 @@ int qx_runtime_launch(const qx_paths *p)
            (unsigned long long)(uintptr_t)img.base, (double)img.span / (1024.0 * 1024.0));
     qx_log("  entry 0x%llx", (unsigned long long)img.entry);
     qx_log("  applied %u relative relocation(s)", img.relative_relocs);
-    qx_log("  %u symbolic relocation(s) await the bionic/syscall shim",
-           img.symbolic_relocs + img.other_relocs);
+    qx_log("  bound %u symbolic relocation(s): %u resolved by the shim, %u pending",
+           img.symbolic_relocs, img.symbolic_resolved, img.symbolic_relocs - img.symbolic_resolved);
+    if (img.other_relocs)
+        qx_log("  %u relocation(s) of unhandled types", img.other_relocs);
     qx_elf_unload(&img);
 
     qx_log("");
-    qx_log("The library is mapped, but the runtime core that executes it");
-    qx_log("(Linux syscall + bionic shim, synthetic JNI, and the Vulkan/SDL");
+    qx_log("The library is mapped and relocated, but the runtime core that runs it");
+    qx_log("(the SysV-ABI bionic/syscall shim, synthetic JNI, and the EGL/GLES");
     qx_log("graphics bridge) is still being built, so Roblox does not start yet.");
     qx_log("Login data in %ls is preserved across every build.", p->app_data_dir);
     return QX_RUN_NOT_READY;

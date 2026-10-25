@@ -1,17 +1,22 @@
 /*
- * Quartix - map the Android ELF into memory and apply the relocations that need
- * no symbols. Copyright (C) 2026 Quartix contributors. GPLv3 (see LICENSE).
+ * Quartix - map the Android ELF into memory and apply its relocations.
+ * Copyright (C) 2026 Quartix contributors. GPLv3 (see LICENSE).
  *
- * This is phase 2 of the runtime (see docs/PLAN.md): reserve one span for the
- * library, copy each PT_LOAD segment into place at a chosen load bias, apply the
- * relative relocations (R_X86_64_RELATIVE, which only need the bias), and give
- * every segment its final page protection. Symbolic relocations (GLOB_DAT,
- * JUMP_SLOT, and 64-bit symbol relocations) are counted but left for the
- * Linux-syscall + bionic shim that resolves imports - the phase after this one.
- * Nothing here transfers control to the mapped code; that too waits for the shim.
+ * Phase 2+ of the runtime (see docs/PLAN.md). Reserve one span for the library,
+ * copy each PT_LOAD segment to a chosen load bias, apply the relocations, and
+ * give every segment its final page protection.
  *
- * The file comes from a user-supplied APK, so every offset, size and relocation
- * target is validated against the reserved span before it is used.
+ * libroblox.so is a position-independent Android build, so:
+ *   - its ~628k relative relocations are packed in Android's APS2 format
+ *     (DT_ANDROID_RELA), not a plain RELA table, so we decode that here;
+ *   - it is linked BIND_NOW, so all symbols are resolved at load. Symbolic
+ *     relocations are bound through the shim resolver (qx_shim_resolve); any it
+ *     does not implement yet are bound to a trap so the image is still complete.
+ *
+ * Nothing here transfers control to the mapped code - the SysV-ABI bridge and
+ * the init-array call are the next phase. Every file offset, size and
+ * relocation target is validated against the reserved span, since the library
+ * comes from a user-supplied APK.
  */
 #include "quartix.h"
 #include <stdio.h>
@@ -19,18 +24,21 @@
 #include <string.h>
 #include <wchar.h>
 
-#define ET_DYN 3
 #define EM_X86_64 62
 #define PT_LOAD 1
 #define PT_DYNAMIC 2
 #define PF_X 1
 #define PF_W 2
 #define DT_NULL 0
+#define DT_STRTAB 5
+#define DT_SYMTAB 6
 #define DT_RELA 7
 #define DT_RELASZ 8
-#define DT_RELAENT 9
+#define DT_STRSZ 10
 #define DT_JMPREL 23
 #define DT_PLTRELSZ 2
+#define DT_ANDROID_RELA 0x60000011
+#define DT_ANDROID_RELASZ 0x60000012
 #define R_X86_64_64 1
 #define R_X86_64_GLOB_DAT 6
 #define R_X86_64_JUMP_SLOT 7
@@ -38,7 +46,7 @@
 
 #define PHNUM_CAP 128
 #define DYN_CAP 8192
-#define SPAN_CAP (1024ull * 1024 * 1024) /* refuse absurd images (1 GiB) */
+#define SPAN_CAP (2048ull * 1024 * 1024) /* refuse absurd images (2 GiB) */
 
 static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
 static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
@@ -53,51 +61,161 @@ struct phdr {
     uint64_t memsz;
 };
 
+/* Everything the relocation pass needs, gathered from the dynamic section. All
+ * addresses are already translated to pointers inside the mapped image. */
+struct reloc_ctx {
+    qx_elf_image *img;
+    uint64_t lo;
+    const uint8_t *symtab;   /* DT_SYMTAB, or NULL */
+    uint64_t symtab_bytes;   /* room from symtab to end of span */
+    const char *strtab;      /* DT_STRTAB, or NULL */
+    uint64_t strsz;
+};
+
 static uint64_t page_down(uint64_t v) { return v & ~(uint64_t)0xfff; }
 static uint64_t page_up(uint64_t v) { return (v + 0xfff) & ~(uint64_t)0xfff; }
 
-/* Walk DT_RELA and DT_JMPREL tables and apply R_X86_64_RELATIVE; tally the rest. */
-static void apply_relocs(qx_elf_image *img, uint64_t lo, const uint8_t *dyn, uint64_t dyn_n)
+/* Map a mapped-image virtual address to a pointer, or NULL if out of range for
+ * `need` bytes. */
+static uint8_t *at(struct reloc_ctx *c, uint64_t vaddr, uint64_t need)
 {
-    uint64_t rela_va = 0, rela_sz = 0, jmprel_va = 0, pltrel_sz = 0, i, t;
+    uint64_t off = vaddr - c->lo;
+    if (vaddr < c->lo || off >= c->img->span || c->img->span - off < need)
+        return NULL;
+    return c->img->base + off;
+}
 
-    for (i = 0; i < dyn_n; i++) {
-        uint64_t tag = rd64(dyn + i * 16), val = rd64(dyn + i * 16 + 8);
-        if (tag == DT_NULL)
-            break;
-        else if (tag == DT_RELA) rela_va = val;
-        else if (tag == DT_RELASZ) rela_sz = val;
-        else if (tag == DT_JMPREL) jmprel_va = val;
-        else if (tag == DT_PLTRELSZ) pltrel_sz = val;
+/* Resolve the symbol a relocation names to an address to store. */
+static void *resolve_symbol(struct reloc_ctx *c, uint32_t sym, int *resolved)
+{
+    uint64_t name_off;
+    const char *name;
+    void *addr;
+    *resolved = 0;
+    if (!c->symtab || !c->strtab || (uint64_t)sym * 24 + 24 > c->symtab_bytes)
+        return qx_shim_trap_addr();
+    name_off = rd32(c->symtab + (uint64_t)sym * 24); /* st_name */
+    if (name_off >= c->strsz)
+        return qx_shim_trap_addr();
+    name = c->strtab + name_off;
+    addr = qx_shim_resolve(name);
+    if (addr) {
+        *resolved = 1;
+        return addr;
     }
+    return qx_shim_trap_addr(); /* complete the image; traps if ever called */
+}
 
-    for (t = 0; t < 2; t++) {
-        uint64_t va = t == 0 ? rela_va : jmprel_va;
-        uint64_t sz = t == 0 ? rela_sz : pltrel_sz;
-        uint64_t off, k, n;
-        if (!va || !sz)
-            continue;
-        off = va - lo; /* the tables live inside a mapped PT_LOAD segment */
-        if (off >= img->span || sz > img->span - off)
-            continue;
-        n = sz / 24; /* sizeof(Elf64_Rela) */
-        for (k = 0; k < n; k++) {
-            const uint8_t *r = img->base + off + k * 24;
-            uint64_t r_offset = rd64(r), r_info = rd64(r + 8);
-            int64_t r_addend = (int64_t)rd64(r + 16);
-            uint32_t type = (uint32_t)(r_info & 0xffffffff);
-            uint64_t target = r_offset - lo;
-            if (target >= img->span || img->span - target < 8)
-                continue;
-            if (type == R_X86_64_RELATIVE) {
-                uint64_t v = img->bias + (uint64_t)r_addend;
-                memcpy(img->base + target, &v, 8);
-                img->relative_relocs++;
-            } else if (type == R_X86_64_GLOB_DAT || type == R_X86_64_JUMP_SLOT || type == R_X86_64_64) {
-                img->symbolic_relocs++; /* needs symbol resolution - the shim's job */
+/* Apply one relocation given its decoded fields. */
+static void apply_one(struct reloc_ctx *c, uint64_t r_offset, uint64_t r_info, int64_t r_addend)
+{
+    uint32_t type = (uint32_t)(r_info & 0xffffffff);
+    uint32_t sym = (uint32_t)(r_info >> 32);
+    uint8_t *target = at(c, r_offset, 8);
+    if (!target)
+        return; /* out-of-range target: ignore rather than corrupt memory */
+    if (type == R_X86_64_RELATIVE) {
+        uint64_t v = c->img->bias + (uint64_t)r_addend;
+        memcpy(target, &v, 8);
+        c->img->relative_relocs++;
+    } else if (type == R_X86_64_GLOB_DAT || type == R_X86_64_JUMP_SLOT || type == R_X86_64_64) {
+        int resolved;
+        uint64_t v = (uint64_t)(uintptr_t)resolve_symbol(c, sym, &resolved);
+        if (type == R_X86_64_64)
+            v += (uint64_t)r_addend;
+        memcpy(target, &v, 8);
+        c->img->symbolic_relocs++;
+        c->img->symbolic_resolved += resolved;
+    } else {
+        c->img->other_relocs++;
+    }
+}
+
+/* Standard Elf64_Rela table (24 bytes each). */
+static void apply_rela(struct reloc_ctx *c, uint64_t table_va, uint64_t size)
+{
+    uint8_t *p = size ? at(c, table_va, size) : NULL;
+    uint64_t i, n = size / 24;
+    if (!p)
+        return;
+    for (i = 0; i < n; i++)
+        apply_one(c, rd64(p + i * 24), rd64(p + i * 24 + 8), (int64_t)rd64(p + i * 24 + 16));
+}
+
+/* Android APS2 packed relocations: a sleb128 stream that expands to Elf64_Rela
+ * triples. The format matches bionic's packed_reloc_iterator. */
+struct sleb {
+    const uint8_t *p, *end;
+    int ok;
+};
+
+static int64_t sleb_next(struct sleb *s)
+{
+    int64_t result = 0;
+    unsigned shift = 0;
+    uint8_t b;
+    do {
+        if (s->p >= s->end) {
+            s->ok = 0;
+            return 0;
+        }
+        b = *s->p++;
+        result |= (int64_t)(b & 0x7f) << shift;
+        shift += 7;
+    } while (b & 0x80);
+    if (shift < 64 && (b & 0x40))
+        result |= -((int64_t)1 << shift);
+    return result;
+}
+
+#define APS2_GROUPED_BY_INFO 1
+#define APS2_GROUPED_BY_OFFSET_DELTA 2
+#define APS2_GROUPED_BY_ADDEND 4
+#define APS2_HAS_ADDEND 8
+
+static void apply_android_rela(struct reloc_ctx *c, uint64_t blob_va, uint64_t size)
+{
+    uint8_t *blob = size ? at(c, blob_va, size) : NULL;
+    struct sleb s;
+    int64_t count, done = 0, r_offset, r_addend = 0, group_addend = 0;
+
+    if (!blob || size < 4 || memcmp(blob, "APS2", 4) != 0)
+        return;
+    s.p = blob + 4;
+    s.end = blob + size;
+    s.ok = 1;
+    count = sleb_next(&s);
+    r_offset = sleb_next(&s);
+    while (s.ok && done < count) {
+        int64_t group_size = sleb_next(&s);
+        int64_t group_flags = sleb_next(&s);
+        int64_t group_offset_delta = 0, group_info = 0, i;
+        if (group_flags & APS2_GROUPED_BY_OFFSET_DELTA)
+            group_offset_delta = sleb_next(&s);
+        if (group_flags & APS2_GROUPED_BY_INFO)
+            group_info = sleb_next(&s);
+        if ((group_flags & APS2_HAS_ADDEND) && (group_flags & APS2_GROUPED_BY_ADDEND))
+            group_addend += sleb_next(&s);
+        else if (!(group_flags & APS2_HAS_ADDEND))
+            group_addend = 0;
+        if (group_size < 0 || !s.ok || done + group_size > count)
+            return; /* malformed */
+        for (i = 0; i < group_size; i++) {
+            int64_t r_info;
+            r_offset += (group_flags & APS2_GROUPED_BY_OFFSET_DELTA) ? group_offset_delta : sleb_next(&s);
+            r_info = (group_flags & APS2_GROUPED_BY_INFO) ? group_info : sleb_next(&s);
+            if (group_flags & APS2_HAS_ADDEND) {
+                if (!(group_flags & APS2_GROUPED_BY_ADDEND))
+                    r_addend += sleb_next(&s);
+                else
+                    r_addend = group_addend;
             } else {
-                img->other_relocs++;
+                r_addend = 0;
             }
+            if (!s.ok)
+                return;
+            apply_one(c, (uint64_t)r_offset, (uint64_t)r_info, r_addend);
+            done++;
         }
     }
 }
@@ -171,8 +289,6 @@ int qx_elf_load(const wchar_t *path, qx_elf_image *out)
     out->bias = (uint64_t)(uintptr_t)out->base - lo;
     out->entry = out->bias + rd64(eh + 24);
 
-    /* Copy each PT_LOAD segment to base + (vaddr - lo); the tail to memsz is
-     * already zero because VirtualAlloc zero-fills committed pages. */
     for (i = 0; i < nph; i++) {
         uint64_t dest;
         if (ph[i].type != PT_LOAD || ph[i].filesz == 0)
@@ -193,12 +309,48 @@ int qx_elf_load(const wchar_t *path, qx_elf_image *out)
     if (dyn_off && dyn_filesz && dyn_filesz <= DYN_CAP * 16) {
         dyn = (uint8_t *)malloc((size_t)dyn_filesz);
         if (dyn && fseek(f, (long)dyn_off, SEEK_SET) == 0 &&
-            fread(dyn, 1, (size_t)dyn_filesz, f) == dyn_filesz)
-            apply_relocs(out, lo, dyn, dyn_filesz / 16);
+            fread(dyn, 1, (size_t)dyn_filesz, f) == dyn_filesz) {
+            struct reloc_ctx c;
+            uint64_t n = dyn_filesz / 16, k;
+            uint64_t rela_va = 0, rela_sz = 0, andrela_va = 0, andrela_sz = 0;
+            uint64_t jmprel_va = 0, pltrel_sz = 0, symtab_va = 0, strtab_va = 0, strsz = 0;
+            for (k = 0; k < n; k++) {
+                uint64_t tag = rd64(dyn + k * 16), val = rd64(dyn + k * 16 + 8);
+                if (tag == DT_NULL) break;
+                else if (tag == DT_RELA) rela_va = val;
+                else if (tag == DT_RELASZ) rela_sz = val;
+                else if (tag == DT_ANDROID_RELA) andrela_va = val;
+                else if (tag == DT_ANDROID_RELASZ) andrela_sz = val;
+                else if (tag == DT_JMPREL) jmprel_va = val;
+                else if (tag == DT_PLTRELSZ) pltrel_sz = val;
+                else if (tag == DT_SYMTAB) symtab_va = val;
+                else if (tag == DT_STRTAB) strtab_va = val;
+                else if (tag == DT_STRSZ) strsz = val;
+            }
+            memset(&c, 0, sizeof(c));
+            c.img = out;
+            c.lo = lo;
+            if (symtab_va) {
+                uint8_t *st = at(&c, symtab_va, 24);
+                if (st) {
+                    c.symtab = st;
+                    c.symtab_bytes = out->span - (symtab_va - lo);
+                }
+            }
+            if (strtab_va && strsz) {
+                uint8_t *str = at(&c, strtab_va, strsz);
+                if (str) {
+                    c.strtab = (const char *)str;
+                    c.strsz = strsz;
+                }
+            }
+            apply_rela(&c, rela_va, rela_sz);
+            apply_android_rela(&c, andrela_va, andrela_sz);
+            apply_rela(&c, jmprel_va, pltrel_sz);
+        }
         free(dyn);
     }
 
-    /* Give each segment its final protection now that it is written and relocated. */
     for (i = 0; i < nph; i++) {
         DWORD prot, old;
         uint64_t start, end;

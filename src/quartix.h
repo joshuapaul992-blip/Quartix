@@ -105,21 +105,31 @@ typedef struct qx_elf_info {
  * -1 only when the file cannot be read at all. */
 int qx_elf_read(const wchar_t *path, qx_elf_info *out);
 
-/* loader.c - map the ELF into memory and apply symbol-free relocations. Running
- * the mapped code needs the syscall/bionic shim, which is a later phase. */
+/* loader.c - map the ELF into memory and apply its relocations. Roblox's
+ * libroblox.so packs its relative relocations in Android's APS2 format
+ * (DT_ANDROID_RELA), so the loader decodes that as well as the standard RELA
+ * and PLT tables. Symbolic relocations are bound through the shim resolver;
+ * running the mapped code (ABI bridge, init array) is a later phase. */
 typedef struct qx_elf_image {
     uint8_t *base;             /* reserved span (VirtualAlloc), or NULL */
     uint64_t span;             /* bytes reserved */
-    uint64_t bias;            /* base - lowest page-aligned p_vaddr */
+    uint64_t bias;             /* base - lowest page-aligned p_vaddr */
     uint64_t entry;            /* absolute entry point (bias + e_entry) */
     unsigned load_segments;
-    unsigned relative_relocs;  /* R_X86_64_RELATIVE applied */
-    unsigned symbolic_relocs;  /* GLOB_DAT/JUMP_SLOT/64 awaiting the shim */
-    unsigned other_relocs;
+    unsigned relative_relocs;  /* R_X86_64_RELATIVE applied (incl. APS2) */
+    unsigned symbolic_relocs;  /* GLOB_DAT/JUMP_SLOT/64 total */
+    unsigned symbolic_resolved;/* bound to a real shim implementation */
+    unsigned other_relocs;     /* unexpected relocation types */
 } qx_elf_image;
 
 int qx_elf_load(const wchar_t *path, qx_elf_image *out);
 void qx_elf_unload(qx_elf_image *img);
+
+/* shim.c - resolver for the Android/libc symbols libroblox.so imports. Real,
+ * SysV-ABI implementations arrive in later phases; until then a name resolves
+ * to NULL and the loader binds it to a trap that logs and exits if ever called. */
+void *qx_shim_resolve(const char *name); /* real implementation, or NULL */
+void *qx_shim_trap_addr(void);           /* the placeholder trap's address */
 
 /* runtime.c - the native Roblox runtime (work in progress). */
 enum { QX_RUN_NOT_READY = 2 }; /* launch exit code while the core is unfinished */
