@@ -190,9 +190,16 @@ is expected until the Android framework and graphics phases land.
   the three load segments at base `0x21b0000`, applies all 628,016 relative
   relocations, and binds the 637 symbolic relocations (365 resolved, 272
   pending) — identical to the figures produced in CI under Wine.
-- **Next:** bundle a Windows&nbsp;7-compatible ANGLE build so the EGL/GLES path
-  initializes on a real GPU, then the `libmediandk` media layer. See
-  [docs/PLAN.md](docs/PLAN.md).
+- **Graphics DLLs:** the ANGLE DLLs the graphics layer binds to are fetched,
+  verified by SHA-256, with `tools/fetch_angle.py` (or `make angle`), and
+  `make dist` produces a zip of `Quartix.exe` beside them. They are not
+  committed; the pinned source is Electron&nbsp;v22.3.27 (the last Electron line
+  to support Windows&nbsp;7/8.1), x86-64. With the real ANGLE DLLs present the
+  shim resolves **456 of 637** relocations (the 365 non-graphics plus all 91
+  EGL/GLES), leaving only the media families pending — confirmed both in CI
+  under Wine and on a real Windows&nbsp;7 x64 machine.
+- **Next:** validate EGL/GLES initialization on a real GPU, then the
+  `libmediandk` media layer. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 
@@ -203,6 +210,11 @@ compressed APK and bundle entries, vendored unmodified in `third_party/miniz`.
 [BearSSL](https://bearssl.org/) 0.6 (MIT) for TLS, vendored unmodified in
 `third_party/bearssl`. CA list generated from the Mozilla bundle by
 `tools/gen_trust_anchors.sh`.
+[ANGLE](https://github.com/google/angle) (BSD-3-Clause), Google's GLES/EGL
+implementation, used as the graphics backend. Not vendored in-tree: its DLLs
+(`libEGL.dll`, `libGLESv2.dll`, and Microsoft's redistributable
+`d3dcompiler_47.dll`) are fetched and SHA-256-verified by `tools/fetch_angle.py`
+from the pinned Electron&nbsp;v22.3.27 release.
 
 ## License
 
