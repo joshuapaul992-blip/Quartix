@@ -339,6 +339,15 @@ def test_runtime(tmp):
     check("run resolves a scatter/gather socket symbol through the shim",
           "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
 
+    # EGL binds to ANGLE's DLLs; with no libEGL.dll beside the exe the loader
+    # must degrade cleanly, leaving the symbol pending rather than crashing.
+    eglsym = os.path.join(tmp, "egl.apk")
+    make_apk(eglsym, make_elf_with_symbol(b"eglInitialize"))
+    run(EXE, "import-apk", winpath(eglsym), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("an EGL symbol stays pending (binds to the trap) when ANGLE is absent",
+          "0 resolved by the shim" in r.stdout and "1 pending" in r.stdout, r.stdout + r.stderr)
+
     # The SysV-ABI formatter, the stdio/file round-trip, the scanf parser, the
     # time/memory/process services, the libc completion (math, fortified _chk,
     # UTF-8, runtime glue), the libandroid NativeActivity surface, and the

@@ -210,5 +210,8 @@ void *qx_shim_resolve(const char *name)
     r = qx_android_resolve(name);
     if (r)
         return r;
-    return qx_socket_resolve(name);
+    r = qx_socket_resolve(name);
+    if (r)
+        return r;
+    return qx_gl_resolve(name);
 }

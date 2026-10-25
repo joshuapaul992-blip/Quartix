@@ -175,11 +175,20 @@ is expected until the Android framework and graphics phases land.
   calls (`sendmsg`/`recvmsg` and the `mmsg` batches), `socketpair` (loopback-
   emulated) and name resolution (`getnameinfo`/`gethostbyname`). Against the
   real `libroblox.so` the shim resolves 365 of the 637 symbolic relocations,
-  and every pending symbol now belongs to the graphics/media families.
-- **Next:** EGL + OpenGL&nbsp;ES&nbsp;2 graphics and input (vendored from
-  [ANGLE](https://github.com/google/angle) rather than hand-written) and the
-  `libmediandk` media layer — the parts that need a real GPU to validate. See
-  [docs/PLAN.md](docs/PLAN.md).
+  and every pending symbol now belongs to the graphics/media families. The
+  **EGL binding layer** (`src/gl.c`) is now in: it loads ANGLE's
+  `libEGL.dll`/`libGLESv2.dll` when present beside the executable and binds the
+  engine's EGL imports to them through SysV&nbsp;→&nbsp;Microsoft ABI thunks,
+  degrading cleanly to pending (no crash) when ANGLE is absent. The EGL symbols
+  therefore stay pending until the ANGLE DLLs are bundled — resolving them is a
+  runtime concern, not a code gap.
+- **Verified on real hardware:** on a Windows&nbsp;7 x64 machine the loader maps
+  the three load segments at base `0x21b0000`, applies all 628,016 relative
+  relocations, and binds the 637 symbolic relocations (365 resolved, 272
+  pending) — identical to the figures produced in CI under Wine.
+- **Next:** bundle a Windows&nbsp;7-compatible ANGLE build so the EGL/GLES path
+  initializes on a real GPU, add the OpenGL&nbsp;ES&nbsp;2 thunks, and the
+  `libmediandk` media layer. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 
