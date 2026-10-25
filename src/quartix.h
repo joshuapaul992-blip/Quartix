@@ -142,6 +142,7 @@ void *qx_gl_resolve(const char *name);      /* EGL/GLES bound to ANGLE, or NULL 
 void *qx_gl_proc(const char *name);         /* raw ANGLE DLL symbol (Microsoft ABI), or NULL */
 int qx_gl_available(void);                  /* nonzero once the ANGLE DLLs load */
 void qx_gl_set_dir(const wchar_t *dir);     /* directory to load the ANGLE DLLs from */
+int qx_gl_smoketest(void);                  /* gltest.c: drive ANGLE->D3D on the GPU; 0 on success */
 /* socket fds are not CRT descriptors, so stdio.c routes close/read/write for them here */
 int qx_socket_is_sock(int fd);
 int qx_socket_close(int fd);
