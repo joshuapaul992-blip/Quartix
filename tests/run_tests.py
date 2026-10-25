@@ -332,6 +332,13 @@ def test_runtime(tmp):
     check("run resolves a socket symbol through the shim",
           "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
 
+    msym = os.path.join(tmp, "sendmsg.apk")
+    make_apk(msym, make_elf_with_symbol(b"sendmsg"))
+    run(EXE, "import-apk", winpath(msym), data_dir=data)
+    r = run(EXE, "run", data_dir=data)
+    check("run resolves a scatter/gather socket symbol through the shim",
+          "1 resolved by the shim" in r.stdout, r.stdout + r.stderr)
+
     # The SysV-ABI formatter, the stdio/file round-trip, the scanf parser, the
     # time/memory/process services, the libc completion (math, fortified _chk,
     # UTF-8, runtime glue), the libandroid NativeActivity surface, and the

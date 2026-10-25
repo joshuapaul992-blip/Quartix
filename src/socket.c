@@ -34,6 +34,7 @@
  */
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h> /* if_nametoindex / if_indextoname (Vista+) */
 #include "quartix.h"
 #include <stdint.h>
 #include <string.h>
@@ -558,6 +559,194 @@ static SYSV const char *qx_gai_strerror(int code)
     return "getaddrinfo error"; /* bionic returns a static string; callers only print it */
 }
 
+/* ---- scatter/gather: sendmsg / recvmsg (+ the mmsg batch forms) ----------- */
+struct lx_iovec { void *iov_base; size_t iov_len; };
+struct lx_msghdr {
+    void *msg_name;
+    uint32_t msg_namelen;
+    uint32_t _pad;
+    struct lx_iovec *msg_iov;
+    uint64_t msg_iovlen;
+    void *msg_control;
+    uint64_t msg_controllen;
+    int msg_flags;
+};
+struct lx_mmsghdr { struct lx_msghdr msg_hdr; unsigned msg_len; };
+
+/* Build a WSABUF array from the Linux iovec array; returns a malloc'd array the
+ * caller frees (NULL on allocation failure or zero iovs). */
+static WSABUF *iov_to_wsabuf(const struct lx_iovec *iov, uint64_t n)
+{
+    WSABUF *b;
+    uint64_t i;
+    if (n == 0)
+        return NULL;
+    b = (WSABUF *)malloc((size_t)n * sizeof(*b));
+    if (!b)
+        return NULL;
+    for (i = 0; i < n; i++) {
+        b[i].buf = (char *)iov[i].iov_base;
+        b[i].len = iov[i].iov_len > 0xffffffffu ? 0xffffffffu : (ULONG)iov[i].iov_len;
+    }
+    return b;
+}
+static SYSV long long qx_sendmsg(int fd, const struct lx_msghdr *m, int flags)
+{
+    WSABUF *b;
+    DWORD sent = 0;
+    int r;
+    if (!m) { *qx_shim_errno() = LX_EFAULT; return -1; }
+    b = iov_to_wsabuf(m->msg_iov, m->msg_iovlen);
+    if (m->msg_iovlen && !b) { *qx_shim_errno() = LX_ENOBUFS; return -1; }
+    if (m->msg_name && m->msg_namelen) {
+        struct sockaddr_storage ss;
+        int wl = sa_to_win(m->msg_name, (int)m->msg_namelen, &ss);
+        r = WSASendTo((SOCKET)fd, b, (DWORD)m->msg_iovlen, &sent, (DWORD)flags,
+                      (struct sockaddr *)&ss, wl, NULL, NULL);
+    } else {
+        r = WSASend((SOCKET)fd, b, (DWORD)m->msg_iovlen, &sent, (DWORD)flags, NULL, NULL);
+    }
+    free(b);
+    if (r != 0) { set_err(); return -1; }
+    return (long long)sent;
+}
+static SYSV long long qx_recvmsg(int fd, struct lx_msghdr *m, int flags)
+{
+    WSABUF *b;
+    DWORD got = 0, wflags = (DWORD)flags;
+    int r;
+    struct sockaddr_storage ss;
+    int sl = sizeof(ss);
+    if (!m) { *qx_shim_errno() = LX_EFAULT; return -1; }
+    b = iov_to_wsabuf(m->msg_iov, m->msg_iovlen);
+    if (m->msg_iovlen && !b) { *qx_shim_errno() = LX_ENOBUFS; return -1; }
+    r = WSARecvFrom((SOCKET)fd, b, (DWORD)m->msg_iovlen, &got, &wflags,
+                    m->msg_name ? (struct sockaddr *)&ss : NULL,
+                    m->msg_name ? &sl : NULL, NULL, NULL);
+    free(b);
+    if (r != 0) { set_err(); return -1; }
+    if (m->msg_name && m->msg_namelen) {
+        int out = sl < (int)m->msg_namelen ? sl : (int)m->msg_namelen;
+        sa_to_lx(m->msg_name, &ss, out);
+        m->msg_namelen = sl;
+    }
+    m->msg_flags = 0;
+    return (long long)got;
+}
+static SYSV int qx_sendmmsg(int fd, struct lx_mmsghdr *m, unsigned vlen, int flags)
+{
+    unsigned i;
+    for (i = 0; i < vlen; i++) {
+        long long s = qx_sendmsg(fd, &m[i].msg_hdr, flags);
+        if (s < 0)
+            return i ? (int)i : -1; /* partial success returns the count sent */
+        m[i].msg_len = (unsigned)s;
+    }
+    return (int)vlen;
+}
+static SYSV int qx_recvmmsg(int fd, struct lx_mmsghdr *m, unsigned vlen, int flags, void *timeout)
+{
+    unsigned i;
+    (void)timeout;
+    for (i = 0; i < vlen; i++) {
+        long long s = qx_recvmsg(fd, &m[i].msg_hdr, flags);
+        if (s < 0)
+            return i ? (int)i : -1;
+        m[i].msg_len = (unsigned)s;
+    }
+    return (int)vlen;
+}
+
+/* ---- socketpair (loopback-emulated; Winsock has no AF_UNIX pre-Win10) ------ */
+static SYSV int qx_socketpair(int domain, int type, int protocol, int sv[2])
+{
+    int t = type & ~(LX_SOCK_NONBLOCK | LX_SOCK_CLOEXEC);
+    SOCKET a = INVALID_SOCKET, b = INVALID_SOCKET, lis = INVALID_SOCKET;
+    struct sockaddr_in addr;
+    int alen = sizeof(addr);
+    (void)domain; (void)protocol;
+    wsa_ensure();
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    if (t == SOCK_DGRAM) {
+        /* two UDP sockets bound to loopback, each connected to the other */
+        struct sockaddr_in aa, bb;
+        int al2 = sizeof(aa), bl2 = sizeof(bb);
+        a = socket(AF_INET, SOCK_DGRAM, 0);
+        b = socket(AF_INET, SOCK_DGRAM, 0);
+        if (a == INVALID_SOCKET || b == INVALID_SOCKET) goto fail;
+        if (bind(a, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
+            bind(b, (struct sockaddr *)&addr, sizeof(addr)) != 0) goto fail;
+        if (getsockname(a, (struct sockaddr *)&aa, &al2) != 0 ||
+            getsockname(b, (struct sockaddr *)&bb, &bl2) != 0) goto fail;
+        if (connect(a, (struct sockaddr *)&bb, bl2) != 0 ||
+            connect(b, (struct sockaddr *)&aa, al2) != 0) goto fail;
+    } else {
+        /* a connected TCP pair over the loopback */
+        lis = socket(AF_INET, SOCK_STREAM, 0);
+        if (lis == INVALID_SOCKET) goto fail;
+        if (bind(lis, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
+            listen(lis, 1) != 0 ||
+            getsockname(lis, (struct sockaddr *)&addr, &alen) != 0) goto fail;
+        a = socket(AF_INET, SOCK_STREAM, 0);
+        if (a == INVALID_SOCKET) goto fail;
+        if (connect(a, (struct sockaddr *)&addr, alen) != 0) goto fail;
+        b = accept(lis, NULL, NULL);
+        if (b == INVALID_SOCKET) goto fail;
+        closesocket(lis);
+        lis = INVALID_SOCKET;
+    }
+    sv[0] = (int)a;
+    sv[1] = (int)b;
+    sock_register((int)a);
+    sock_register((int)b);
+    return 0;
+fail:
+    set_err();
+    if (a != INVALID_SOCKET) closesocket(a);
+    if (b != INVALID_SOCKET) closesocket(b);
+    if (lis != INVALID_SOCKET) closesocket(lis);
+    return -1;
+}
+
+/* ---- getnameinfo / gethostbyname / if_* ----------------------------------- */
+/* Linux NI_* (NUMERICHOST=1, NUMERICSERV=2, NOFQDN=4, NAMEREQD=8, DGRAM=16)
+ * map to the differently-numbered Windows NI_* bits. */
+static int ni_flags_to_win(int f)
+{
+    int w = 0;
+    if (f & 0x01) w |= NI_NUMERICHOST;
+    if (f & 0x02) w |= NI_NUMERICSERV;
+    if (f & 0x04) w |= NI_NOFQDN;
+    if (f & 0x08) w |= NI_NAMEREQD;
+    if (f & 0x10) w |= NI_DGRAM;
+    return w;
+}
+static SYSV int qx_getnameinfo(const void *sa, int salen, char *host, unsigned hostlen,
+                               char *serv, unsigned servlen, int flags)
+{
+    struct sockaddr_storage ss;
+    int wl = sa_to_win(sa, salen, &ss);
+    if (wl < 0)
+        return EAI_FAMILY;
+    return getnameinfo((struct sockaddr *)&ss, wl, host, hostlen, serv, servlen, ni_flags_to_win(flags));
+}
+/* gethostbyname: the hostent layout matches Linux for AF_INET (the common
+ * case), so forward to Winsock. Winsock keeps the result in thread storage. */
+static SYSV void *qx_gethostbyname(const char *name)
+{
+    void *h;
+    wsa_ensure();
+    h = gethostbyname(name);
+    if (!h)
+        set_err();
+    return h;
+}
+static SYSV unsigned qx_if_nametoindex(const char *name) { return if_nametoindex(name); }
+static SYSV char *qx_if_indextoname(unsigned idx, char *name) { return if_indextoname(idx, name); }
+
 /* ---- resolver -------------------------------------------------------------- */
 struct sock_sym { const char *name; void *fn; };
 static const struct sock_sym g_sock_table[] = {
@@ -570,6 +759,11 @@ static const struct sock_sym g_sock_table[] = {
     {"inet_pton", (void *)qx_inet_pton}, {"poll", (void *)qx_poll}, {"select", (void *)qx_select},
     {"getaddrinfo", (void *)qx_getaddrinfo}, {"freeaddrinfo", (void *)qx_freeaddrinfo},
     {"gai_strerror", (void *)qx_gai_strerror},
+    {"sendmsg", (void *)qx_sendmsg}, {"recvmsg", (void *)qx_recvmsg},
+    {"sendmmsg", (void *)qx_sendmmsg}, {"recvmmsg", (void *)qx_recvmmsg},
+    {"socketpair", (void *)qx_socketpair}, {"getnameinfo", (void *)qx_getnameinfo},
+    {"gethostbyname", (void *)qx_gethostbyname},
+    {"if_nametoindex", (void *)qx_if_nametoindex}, {"if_indextoname", (void *)qx_if_indextoname},
 };
 
 void *qx_socket_resolve(const char *name)
@@ -659,6 +853,32 @@ SYSV int qx_socket_selftest(int *total)
         /* the listen socket is no longer registered after close */
         if (ls >= 0 && qx_socket_is_sock(ls))
             fails++;
+    }
+    /* socketpair + scatter/gather: a two-iovec sendmsg reassembles on recvmsg */
+    n++;
+    {
+        int sp[2] = {-1, -1};
+        if (qx_socketpair(1 /*AF_UNIX*/, 1 /*SOCK_STREAM*/, 0, sp) != 0) {
+            fails++;
+        } else {
+            char b1[] = "foo", b2[] = "bar", rb[8];
+            struct lx_iovec iov[2], riov;
+            struct lx_msghdr mh, rmh;
+            long long s, r;
+            iov[0].iov_base = b1; iov[0].iov_len = 3;
+            iov[1].iov_base = b2; iov[1].iov_len = 3;
+            memset(&mh, 0, sizeof(mh));
+            mh.msg_iov = iov; mh.msg_iovlen = 2;
+            s = qx_sendmsg(sp[0], &mh, 0);
+            riov.iov_base = rb; riov.iov_len = sizeof(rb);
+            memset(&rmh, 0, sizeof(rmh));
+            rmh.msg_iov = &riov; rmh.msg_iovlen = 1;
+            r = qx_recvmsg(sp[1], &rmh, 0);
+            if (s != 6 || r != 6 || memcmp(rb, "foobar", 6) != 0)
+                fails++;
+            qx_socket_close(sp[0]);
+            qx_socket_close(sp[1]);
+        }
     }
 
     if (total)

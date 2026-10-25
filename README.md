@@ -171,12 +171,15 @@ is expected until the Android framework and graphics phases land.
   bridge** — the engine's BSD sockets (`socket`/`connect`/`sendto`/`recvfrom`/
   `poll`/`select`/`getaddrinfo`/…) mapped onto Winsock, translating the address
   families, socket options, `poll`/`select` structures and error codes that
-  differ between Linux and Windows. Against the real `libroblox.so` the shim
-  resolves 356 of the 637 symbolic relocations.
+  differ between Linux and Windows — now complete, including the scatter/gather
+  calls (`sendmsg`/`recvmsg` and the `mmsg` batches), `socketpair` (loopback-
+  emulated) and name resolution (`getnameinfo`/`gethostbyname`). Against the
+  real `libroblox.so` the shim resolves 365 of the 637 symbolic relocations,
+  and every pending symbol now belongs to the graphics/media families.
 - **Next:** EGL + OpenGL&nbsp;ES&nbsp;2 graphics and input (vendored from
   [ANGLE](https://github.com/google/angle) rather than hand-written) and the
-  `libmediandk` media layer, plus the remaining scatter/gather socket calls.
-  See [docs/PLAN.md](docs/PLAN.md).
+  `libmediandk` media layer — the parts that need a real GPU to validate. See
+  [docs/PLAN.md](docs/PLAN.md).
 
 ## Third-party code
 
