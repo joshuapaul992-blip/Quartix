@@ -748,6 +748,7 @@ static DWORD WINAPI thread_trampoline(LPVOID p)
     struct tcb *t = (struct tcb *)p;
     void *ret;
     TlsSetValue(g_self_tls, t);
+    qx_diag_stack_cushion(); /* leave room for the crash handler on engine threads */
     ret = t->start(t->arg);
     finish_thread(t, ret);
     return 0;

@@ -170,6 +170,7 @@ int qx_jni_call_onload(void *jni_onload);   /* call the engine's JNI_OnLoad; ret
  * Windows x64 (which leaves the %fs base at 0), via a vectored exception handler. */
 void qx_tls_init(void);                     /* install the handler + set up this thread's block */
 void qx_tls_set_image_range(const void *base, uint64_t span); /* engine image, for fault locating */
+void qx_diag_stack_cushion(void);           /* reserve stack for the crash handler on this thread */
 void *qx_tls_block(void);                   /* this thread's TLS block (creating it if needed) */
 int qx_fs_emulate(const unsigned char *insn, CONTEXT *ctx, void *block); /* decode+emulate one %fs insn; len or 0 */
 int qx_tls_selftest(int *total);            /* decoder/emulator checks; returns failures */
@@ -183,6 +184,7 @@ void qx_android_set_window_size(int w, int h);     /* set the native window dime
 void *qx_android_asset_manager(void);              /* the stand-in AAssetManager handle */
 void *qx_android_native_window(void);              /* the stand-in ANativeWindow handle */
 int *qx_shim_errno(void);                  /* the engine's errno storage (src/shim.c) */
+void qx_random_bytes(void *buf, size_t n); /* cryptographic random (src/cstd.c), host ABI */
 void qx_stdio_write(void *stream, const char *buf, size_t n); /* stdout/stderr -> log, else CRT */
 /* sysv_abi so main() calls it with the same convention it is defined with; these
  * are non-variadic, so the fixed-arg Microsoft->SysV call is a safe thunk. */
