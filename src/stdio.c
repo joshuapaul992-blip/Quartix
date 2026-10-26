@@ -236,6 +236,24 @@ static SYSV int qx_setvbuf(void *f, char *buf, int mode, size_t size)
 }
 
 /* ---- raw descriptors ------------------------------------------------------ */
+
+/* The engine's std::random_device (and other code) opens /dev/urandom for
+ * randomness; Windows has no such device, so opening it fails and the engine
+ * throws and aborts. Emulate it: opening it yields a sentinel fd whose reads
+ * return cryptographic random bytes (from the Windows CSP, via qx_random_bytes).
+ * The sentinels are far outside the CRT and socket fd ranges. */
+#define QX_FD_URANDOM 0x7ffffffe
+#define QX_FD_RANDOM  0x7ffffffd
+static int is_random_fd(int fd) { return fd == QX_FD_URANDOM || fd == QX_FD_RANDOM; }
+static int random_dev_fd(const char *path)
+{
+    if (path && strcmp(path, "/dev/urandom") == 0)
+        return QX_FD_URANDOM;
+    if (path && strcmp(path, "/dev/random") == 0)
+        return QX_FD_RANDOM;
+    return 0;
+}
+
 static int translate_oflags(int lx)
 {
     int ms = _O_BINARY;
@@ -258,8 +276,11 @@ static int translate_oflags(int lx)
 }
 static SYSV int qx_open(const char *path, int flags, int mode)
 {
-    wchar_t *wp = to_wide(path);
-    int fd;
+    wchar_t *wp;
+    int fd = random_dev_fd(path);
+    if (fd)                       /* /dev/urandom or /dev/random */
+        return fd;
+    wp = to_wide(path);
     if (!wp) {
         carry_errno();
         return -1;
@@ -276,6 +297,8 @@ static SYSV int qx_open_2(const char *path, int flags) { return qx_open(path, fl
 static SYSV int qx_close(int fd)
 {
     int r;
+    if (is_random_fd(fd))      /* emulated /dev/urandom: nothing to close */
+        return 0;
     if (qx_socket_is_sock(fd)) /* sockets are not CRT fds; route to closesocket */
         return qx_socket_close(fd);
     r = _close(fd);
@@ -287,6 +310,10 @@ static SYSV long long qx_read(int fd, void *buf, size_t n)
 {
     int r;
     unsigned cap = n > 0x7fffffffu ? 0x7fffffffu : (unsigned)n;
+    if (is_random_fd(fd)) {    /* emulated /dev/urandom: fill with random bytes */
+        qx_random_bytes(buf, n);
+        return (long long)n;
+    }
     if (qx_socket_is_sock(fd)) /* a socket fd uses recv, not _read */
         return qx_socket_read(fd, buf, n);
     r = _read(fd, buf, cap);
@@ -298,6 +325,8 @@ static SYSV long long qx_write(int fd, const void *buf, size_t n)
 {
     int r;
     unsigned cap = n > 0x7fffffffu ? 0x7fffffffu : (unsigned)n;
+    if (is_random_fd(fd))      /* writes to the random device are discarded */
+        return (long long)n;
     if (qx_socket_is_sock(fd)) /* a socket fd uses send, not _write */
         return qx_socket_write(fd, buf, n);
     r = _write(fd, buf, cap);
@@ -307,7 +336,10 @@ static SYSV long long qx_write(int fd, const void *buf, size_t n)
 }
 static SYSV long long qx_lseek(int fd, long long off, int whence)
 {
-    long long r = _lseeki64(fd, off, whence);
+    long long r;
+    if (is_random_fd(fd))      /* the random device is not seekable */
+        return 0;
+    r = _lseeki64(fd, off, whence);
     if (r < 0)
         carry_errno();
     return r;
@@ -316,8 +348,11 @@ static SYSV long long qx_lseek(int fd, long long off, int whence)
 /* ---- path operations ------------------------------------------------------ */
 static SYSV int qx_access(const char *path, int mode)
 {
-    wchar_t *wp = to_wide(path);
+    wchar_t *wp;
     int msmode = 0, r;
+    if (random_dev_fd(path))   /* emulated /dev/urandom exists and is readable */
+        return 0;
+    wp = to_wide(path);
     if (!wp) {
         carry_errno();
         return -1;

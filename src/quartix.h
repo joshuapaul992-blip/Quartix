@@ -183,6 +183,7 @@ void qx_android_set_window_size(int w, int h);     /* set the native window dime
 void *qx_android_asset_manager(void);              /* the stand-in AAssetManager handle */
 void *qx_android_native_window(void);              /* the stand-in ANativeWindow handle */
 int *qx_shim_errno(void);                  /* the engine's errno storage (src/shim.c) */
+void qx_random_bytes(void *buf, size_t n); /* cryptographic random (src/cstd.c), host ABI */
 void qx_stdio_write(void *stream, const char *buf, size_t n); /* stdout/stderr -> log, else CRT */
 /* sysv_abi so main() calls it with the same convention it is defined with; these
  * are non-variadic, so the fixed-arg Microsoft->SysV call is a safe thunk. */

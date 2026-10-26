@@ -362,9 +362,10 @@ static SYSV void qx_assert2(const char *file, int line, const char *func, const 
     ExitProcess(134);
 }
 
-/* arc4random_buf: cryptographic random from the Windows CSP (Vista+). */
+/* Cryptographic random from the Windows CSP (Vista+). Host-ABI helper, shared
+ * with the /dev/urandom emulation in stdio.c; callable from our own code. */
 static HCRYPTPROV g_prov;
-static SYSV void qx_arc4random_buf(void *buf, size_t n)
+void qx_random_bytes(void *buf, size_t n)
 {
     if (!g_prov)
         CryptAcquireContextW(&g_prov, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT | CRYPT_SILENT);
@@ -376,11 +377,28 @@ static SYSV void qx_arc4random_buf(void *buf, size_t n)
             ((unsigned char *)buf)[i] = (unsigned char)rand();
     }
 }
+static SYSV void qx_arc4random_buf(void *buf, size_t n) { qx_random_bytes(buf, n); }
 static SYSV uint32_t qx_arc4random(void)
 {
     uint32_t v;
-    qx_arc4random_buf(&v, sizeof(v));
+    qx_random_bytes(&v, sizeof(v));
     return v;
+}
+/* getentropy: fill buf with up to 256 random bytes; 0 on success, -1 on EIO. */
+static SYSV int qx_getentropy(void *buf, size_t n)
+{
+    if (n > 256) {
+        *qx_shim_errno() = 5; /* EIO */
+        return -1;
+    }
+    qx_random_bytes(buf, n);
+    return 0;
+}
+/* bionic records a human-readable reason just before aborting; surface it. */
+static SYSV void qx_android_set_abort_message(const char *msg)
+{
+    if (msg)
+        qx_err("engine abort: %s", msg);
 }
 
 static SYSV int qx_register_atfork(void *a, void *b, void *c, void *d)
@@ -707,6 +725,7 @@ static const struct cstd_sym g_cstd_table[] = {
     {"__cxa_atexit", (void *)qx_cxa_atexit}, {"__cxa_finalize", (void *)qx_cxa_finalize},
     {"__assert", (void *)qx_assert}, {"__assert2", (void *)qx_assert2},
     {"arc4random_buf", (void *)qx_arc4random_buf}, {"arc4random", (void *)qx_arc4random},
+    {"getentropy", (void *)qx_getentropy}, {"android_set_abort_message", (void *)qx_android_set_abort_message},
     {"__register_atfork", (void *)qx_register_atfork}, {"getauxval", (void *)qx_getauxval},
     {"__system_property_get", (void *)qx_system_property_get},
     /* locale */
