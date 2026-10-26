@@ -128,6 +128,8 @@ typedef struct qx_elf_image {
     uint64_t init_array;       /* absolute addr of DT_INIT_ARRAY, or 0 */
     uint64_t init_array_n;     /* number of function pointers in it */
     uint64_t init_func;        /* absolute addr of DT_INIT, or 0 */
+    const uint8_t *phdr;       /* mapped program-header array (Elf64_Phdr[]), or NULL */
+    uint64_t phnum;            /* number of program headers */
 } qx_elf_image;
 
 int qx_elf_load(const wchar_t *path, qx_elf_image *out);
@@ -146,6 +148,7 @@ void *qx_shim_trap_addr(void);           /* the placeholder trap's address */
 void *qx_shim_named_trap(const char *name); /* a trap that names the missing symbol when hit */
 void *qx_shim_named_data(const char *name); /* zeroed R/W storage for an unimplemented data symbol */
 int qx_shim_dump_pending(void);             /* log every still-unimplemented symbol; returns the count */
+void qx_shim_set_image(const qx_elf_image *img); /* the loaded image dl_iterate_phdr reports (or NULL) */
 void *qx_thread_resolve(const char *name); /* pthreads/sched slice, or NULL */
 void *qx_format_resolve(const char *name); /* variadic printf/log slice, or NULL */
 void *qx_stdio_resolve(const char *name);  /* stdio/file slice, or NULL */

@@ -263,6 +263,43 @@ static SYSV int sh_dlclose(void *handle) { (void)handle; return 0; }
 static SYSV char *sh_dlerror(void) { return NULL; }
 static SYSV int sh_dladdr(const void *addr, void *info) { (void)addr; (void)info; return 0; }
 
+/* dl_iterate_phdr: the engine's C++ runtime walks the loaded objects to find
+ * each one's PT_GNU_EH_FRAME (the exception-unwinding tables), so this must
+ * report the one real object - libroblox.so - with its load bias and mapped
+ * program headers, not stub to "no objects" (which would break unwinding).
+ * The struct matches bionic's for x86-64: it uses only fixed-width, pointer
+ * and size_t fields, so its layout is identical under mingw's LLP64. */
+struct qx_dl_phdr_info {
+    uint64_t    dlpi_addr;      /* Elf64_Addr, added to each p_vaddr */
+    const char *dlpi_name;
+    const void *dlpi_phdr;      /* Elf64_Phdr[] */
+    uint16_t    dlpi_phnum;     /* Elf64_Half */
+    uint64_t    dlpi_adds;      /* objects ever added */
+    uint64_t    dlpi_subs;      /* objects ever removed */
+    size_t      dlpi_tls_modid;
+    void       *dlpi_tls_data;
+};
+
+static const qx_elf_image *g_image;
+void qx_shim_set_image(const qx_elf_image *img) { g_image = img; }
+
+typedef int (SYSV *qx_phdr_cb)(struct qx_dl_phdr_info *info, size_t size, void *data);
+
+static SYSV int sh_dl_iterate_phdr(qx_phdr_cb cb, void *data)
+{
+    struct qx_dl_phdr_info info;
+    if (!cb || !g_image || !g_image->phdr)
+        return 0;
+    memset(&info, 0, sizeof(info));
+    info.dlpi_addr = g_image->bias;
+    info.dlpi_name = "libroblox.so";
+    info.dlpi_phdr = g_image->phdr;
+    info.dlpi_phnum = (uint16_t)g_image->phnum;
+    info.dlpi_adds = 1;      /* one object, loaded once, never removed */
+    info.dlpi_subs = 0;
+    return cb(&info, sizeof(info), data);
+}
+
 /* --- resolver table --- */
 struct shim_sym {
     const char *name;
@@ -286,6 +323,7 @@ static const struct shim_sym g_table[] = {
     {"ldexp", (void *)sh_ldexp}, {"sincos", (void *)sh_sincos},
     {"dlsym", (void *)sh_dlsym}, {"dlopen", (void *)sh_dlopen}, {"dlclose", (void *)sh_dlclose},
     {"dlerror", (void *)sh_dlerror}, {"dladdr", (void *)sh_dladdr},
+    {"dl_iterate_phdr", (void *)sh_dl_iterate_phdr},
     {"strtod", (void *)sh_strtod}, {"strtof", (void *)sh_strtof}, {"strtoll", (void *)sh_strtoll},
     {"strtoull", (void *)sh_strtoull}, {"atof", (void *)sh_atof}, {"atoi", (void *)sh_atoi},
     {"atol", (void *)sh_atol},

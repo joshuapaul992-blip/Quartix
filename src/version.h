@@ -2,7 +2,7 @@
 #ifndef QX_VERSION_H
 #define QX_VERSION_H
 #define QX_VERSION_MAJOR 0
-#define QX_VERSION_MINOR 18
+#define QX_VERSION_MINOR 19
 #define QX_VERSION_PATCH 0
-#define QX_VERSION_A "0.18.0"
+#define QX_VERSION_A "0.19.0"
 #endif
