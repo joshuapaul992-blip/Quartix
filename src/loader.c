@@ -27,6 +27,7 @@
 #define EM_X86_64 62
 #define PT_LOAD 1
 #define PT_DYNAMIC 2
+#define PT_PHDR 6
 #define PF_X 1
 #define PF_W 2
 #define DT_NULL 0
@@ -239,6 +240,7 @@ int qx_elf_load(const wchar_t *path, qx_elf_image *out)
     uint8_t eh[64];
     struct phdr ph[PHNUM_CAP];
     uint64_t phoff, lo = (uint64_t)~0ull, hi = 0, dyn_off = 0, dyn_filesz = 0;
+    uint64_t pt_phdr_va = 0; /* PT_PHDR vaddr if present, 0 otherwise */
     unsigned phnum, phentsize, i, nph = 0, loads = 0;
     uint8_t *dyn = NULL;
 
@@ -281,6 +283,8 @@ int qx_elf_load(const wchar_t *path, qx_elf_image *out)
         } else if (ph[nph].type == PT_DYNAMIC) {
             dyn_off = ph[nph].offset;
             dyn_filesz = ph[nph].filesz;
+        } else if (ph[nph].type == PT_PHDR) {
+            pt_phdr_va = ph[nph].vaddr;
         }
         nph++;
     }
@@ -404,7 +408,31 @@ int qx_elf_load(const wchar_t *path, qx_elf_image *out)
         VirtualProtect(out->base + start, (SIZE_T)(end - start), prot, &old);
     }
 
+    /* Record the in-memory program-header array so dl_iterate_phdr can report
+     * this object to the engine's C++ unwinder, which iterates the loaded
+     * objects to find each one's PT_GNU_EH_FRAME. Prefer PT_PHDR's vaddr;
+     * otherwise locate the PT_LOAD segment that maps the header table's file
+     * offset. Leave phdr NULL if it would fall outside the mapped span. */
+    {
+        uint64_t ph_va = pt_phdr_va;
+        if (!ph_va) {
+            for (i = 0; i < nph; i++) {
+                if (ph[i].type == PT_LOAD && phoff >= ph[i].offset &&
+                    phoff - ph[i].offset < ph[i].filesz) {
+                    ph_va = ph[i].vaddr + (phoff - ph[i].offset);
+                    break;
+                }
+            }
+        }
+        if (ph_va >= lo && ph_va - lo < out->span &&
+            out->span - (ph_va - lo) >= (uint64_t)phnum * 56) {
+            out->phdr = out->base + (ph_va - lo);
+            out->phnum = phnum;
+        }
+    }
+
     out->load_segments = loads;
+    qx_shim_set_image(out); /* so dl_iterate_phdr can report this object */
     fclose(f);
     return 0;
 
@@ -466,6 +494,7 @@ void qx_elf_run_init(const qx_elf_image *img)
 void qx_elf_unload(qx_elf_image *img)
 {
     if (img && img->base) {
+        qx_shim_set_image(NULL); /* drop the dl_iterate_phdr registration */
         VirtualFree(img->base, 0, MEM_RELEASE);
         img->base = NULL;
     }
