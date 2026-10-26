@@ -86,7 +86,7 @@ int wmain(int argc, wchar_t **argv)
         return r == -1 ? 1 : r;
     }
     if (wcscmp(argv[1], L"selftest") == 0 && argc == 2) {
-        int ft = 0, st = 0, ct = 0, ot = 0, xt = 0, at = 0, kt = 0, gt = 0;
+        int ft = 0, st = 0, ct = 0, ot = 0, xt = 0, at = 0, kt = 0, gt = 0, lt = 0;
         int ff = qx_format_selftest(&ft);
         int sf = qx_stdio_selftest(&st);
         int cf = qx_scan_selftest(&ct);
@@ -95,6 +95,7 @@ int wmain(int argc, wchar_t **argv)
         int af = qx_android_selftest(&at);
         int kf = qx_socket_selftest(&kt);
         int gf = qx_gl_selftest(&gt);
+        int lf = qx_tls_selftest(&lt);
         qx_log("formatter self-test: %d check(s), %d failure(s)", ft, ff);
         qx_log("stdio self-test:     %d check(s), %d failure(s)", st, sf);
         qx_log("scanf self-test:     %d check(s), %d failure(s)", ct, cf);
@@ -103,8 +104,9 @@ int wmain(int argc, wchar_t **argv)
         qx_log("android self-test:   %d check(s), %d failure(s)", at, af);
         qx_log("socket self-test:    %d check(s), %d failure(s)", kt, kf);
         qx_log("graphics self-test:  %d check(s), %d failure(s)", gt, gf);
-        qx_log("self-test total:     %d check(s), %d failure(s)", ft + st + ct + ot + xt + at + kt + gt, ff + sf + cf + of + xf + af + kf + gf);
-        return (ff + sf + cf + of + xf + af + kf + gf) ? 1 : 0;
+        qx_log("tls self-test:       %d check(s), %d failure(s)", lt, lf);
+        qx_log("self-test total:     %d check(s), %d failure(s)", ft + st + ct + ot + xt + at + kt + gt + lt, ff + sf + cf + of + xf + af + kf + gf + lf);
+        return (ff + sf + cf + of + xf + af + kf + gf + lf) ? 1 : 0;
     }
     if (wcscmp(argv[1], L"apk-ls") == 0 && argc == 3) {
         if (qx_apk_list(argv[2], list_visit, NULL)) {
