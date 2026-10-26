@@ -170,6 +170,7 @@ int qx_jni_call_onload(void *jni_onload);   /* call the engine's JNI_OnLoad; ret
  * Windows x64 (which leaves the %fs base at 0), via a vectored exception handler. */
 void qx_tls_init(void);                     /* install the handler + set up this thread's block */
 void qx_tls_set_image_range(const void *base, uint64_t span); /* engine image, for fault locating */
+void qx_diag_stack_cushion(void);           /* reserve stack for the crash handler on this thread */
 void *qx_tls_block(void);                   /* this thread's TLS block (creating it if needed) */
 int qx_fs_emulate(const unsigned char *insn, CONTEXT *ctx, void *block); /* decode+emulate one %fs insn; len or 0 */
 int qx_tls_selftest(int *total);            /* decoder/emulator checks; returns failures */

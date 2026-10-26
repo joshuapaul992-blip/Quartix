@@ -264,10 +264,24 @@ static LONG CALLBACK qx_fs_diag_veh(PEXCEPTION_POINTERS info)
     CONTEXT *c = info->ContextRecord;
     const unsigned char *rip;
     uintptr_t fault;
-    int acc;
+    int acc, is_av;
+    DWORD code = er->ExceptionCode;
     wchar_t mod[64];
 
-    if (er->ExceptionCode != (DWORD)EXCEPTION_ACCESS_VIOLATION)
+    /* Report the fatal exception codes an engine fault can surface as. A stack
+     * overflow (0xC00000FD) is the important addition here: deep C++ recursion
+     * crashes with it, not an access violation, and Windows otherwise shows only
+     * its bare "stopped working" dialog. The reserved stack cushion
+     * (qx_diag_stack_cushion, set on every thread) leaves room for this handler
+     * to run after the guard page is hit. */
+    is_av = (code == (DWORD)EXCEPTION_ACCESS_VIOLATION);
+    if (!is_av &&
+        code != (DWORD)EXCEPTION_STACK_OVERFLOW &&
+        code != (DWORD)EXCEPTION_ILLEGAL_INSTRUCTION &&
+        code != (DWORD)EXCEPTION_PRIV_INSTRUCTION &&
+        code != (DWORD)EXCEPTION_IN_PAGE_ERROR &&
+        code != (DWORD)EXCEPTION_ARRAY_BOUNDS_EXCEEDED &&
+        code != (DWORD)EXCEPTION_DATATYPE_MISALIGNMENT)
         return EXCEPTION_CONTINUE_SEARCH;
     if (InterlockedIncrement(&logged) > 4)
         return EXCEPTION_CONTINUE_SEARCH; /* reported enough already */
@@ -276,8 +290,20 @@ static LONG CALLBACK qx_fs_diag_veh(PEXCEPTION_POINTERS info)
     acc = er->NumberParameters >= 1 ? (int)er->ExceptionInformation[0] : -1;
     fault = er->NumberParameters >= 2 ? (uintptr_t)er->ExceptionInformation[1] : 0;
 
-    qx_log("[fault] access violation (%s) at 0x%llx",
-           acc == 1 ? "write" : acc == 8 ? "exec" : "read", (unsigned long long)fault);
+    if (is_av)
+        qx_log("[fault] access violation (%s) at 0x%llx",
+               acc == 1 ? "write" : acc == 8 ? "exec" : "read",
+               (unsigned long long)fault);
+    else
+        qx_log("[fault] %s (0x%08lx)",
+               code == (DWORD)EXCEPTION_STACK_OVERFLOW ? "stack overflow" :
+               code == (DWORD)EXCEPTION_ILLEGAL_INSTRUCTION ? "illegal instruction" :
+               code == (DWORD)EXCEPTION_PRIV_INSTRUCTION ? "privileged instruction" :
+               code == (DWORD)EXCEPTION_IN_PAGE_ERROR ? "in-page error" :
+               code == (DWORD)EXCEPTION_ARRAY_BOUNDS_EXCEEDED ? "array bounds exceeded" :
+               code == (DWORD)EXCEPTION_DATATYPE_MISALIGNMENT ? "datatype misalignment" :
+               "fatal exception",
+               (unsigned long)code);
     module_at(rip, mod, 64);
     if (in_image(rip))
         qx_log("[fault]   RIP 0x%llx = image+0x%llx (%ls)",
@@ -338,10 +364,21 @@ static LONG CALLBACK qx_fs_diag_veh(PEXCEPTION_POINTERS info)
 
 /* Install the %fs handler and set up the calling thread's TLS block. Idempotent;
  * call once before transferring control to engine code. */
+/* Reserve a stack cushion for the crash handler, so that when a thread exhausts
+ * its stack (deep engine recursion), enough committed stack remains for
+ * qx_fs_diag_veh to run and report instead of the process dying silently. Called
+ * on the main thread (here) and on every engine thread (thread_trampoline). */
+void qx_diag_stack_cushion(void)
+{
+    ULONG want = 0x20000; /* 128 KiB - ample for the diagnostic handler */
+    SetThreadStackGuarantee(&want);
+}
+
 void qx_tls_init(void)
 {
     if (g_tls_slot == TLS_OUT_OF_INDEXES)
         g_tls_slot = TlsAlloc();
+    qx_diag_stack_cushion();
     tls_block_for_current_thread();
     if (!g_veh)
         g_veh = AddVectoredExceptionHandler(1, qx_fs_veh); /* 1 = first in the chain */
