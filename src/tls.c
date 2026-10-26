@@ -223,6 +223,40 @@ static LONG CALLBACK qx_fs_veh(PEXCEPTION_POINTERS info)
  * engine SEH handler; it only reports. Capped so a handled, repeated fault
  * cannot flood the log.
  */
+/* True if the whole [p, p+n) range is committed and readable (no re-fault). */
+static int mem_readable(const void *p, size_t n)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    const char *end;
+    if (!p || !VirtualQuery(p, &mbi, sizeof mbi))
+        return 0;
+    if (mbi.State != MEM_COMMIT)
+        return 0;
+    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))
+        return 0;
+    end = (const char *)mbi.BaseAddress + mbi.RegionSize;
+    return (const char *)p + n <= end; /* conservative: must not span regions */
+}
+
+/* Basename of the module that contains `addr`, into `out` (wide). "?" if none. */
+static void module_at(const void *addr, wchar_t *out, size_t cap)
+{
+    HMODULE h = NULL;
+    wchar_t path[MAX_PATH];
+    out[0] = L'?'; out[1] = 0;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCWSTR)addr, &h) && h &&
+        GetModuleFileNameW(h, path, MAX_PATH)) {
+        wchar_t *slash = wcsrchr(path, L'\\');
+        const wchar_t *base = slash ? slash + 1 : path;
+        size_t i = 0;
+        for (; base[i] && i + 1 < cap; i++)
+            out[i] = base[i];
+        out[i] = 0;
+    }
+}
+
 static LONG CALLBACK qx_fs_diag_veh(PEXCEPTION_POINTERS info)
 {
     static volatile LONG logged;
@@ -231,10 +265,11 @@ static LONG CALLBACK qx_fs_diag_veh(PEXCEPTION_POINTERS info)
     const unsigned char *rip;
     uintptr_t fault;
     int acc;
+    wchar_t mod[64];
 
     if (er->ExceptionCode != (DWORD)EXCEPTION_ACCESS_VIOLATION)
         return EXCEPTION_CONTINUE_SEARCH;
-    if (InterlockedIncrement(&logged) > 8)
+    if (InterlockedIncrement(&logged) > 4)
         return EXCEPTION_CONTINUE_SEARCH; /* reported enough already */
 
     rip = (const unsigned char *)(uintptr_t)c->Rip;
@@ -243,18 +278,21 @@ static LONG CALLBACK qx_fs_diag_veh(PEXCEPTION_POINTERS info)
 
     qx_log("[fault] access violation (%s) at 0x%llx",
            acc == 1 ? "write" : acc == 8 ? "exec" : "read", (unsigned long long)fault);
+    module_at(rip, mod, 64);
     if (in_image(rip))
-        qx_log("[fault]   RIP 0x%llx = image+0x%llx",
+        qx_log("[fault]   RIP 0x%llx = image+0x%llx (%ls)",
                (unsigned long long)(uintptr_t)rip,
-               (unsigned long long)(uintptr_t)(rip - g_img_lo));
+               (unsigned long long)(uintptr_t)(rip - g_img_lo), mod);
     else
-        qx_log("[fault]   RIP 0x%llx (outside the engine image)", (unsigned long long)(uintptr_t)rip);
+        qx_log("[fault]   RIP 0x%llx in %ls (outside the engine image)",
+               (unsigned long long)(uintptr_t)rip, mod);
     if (in_image((const void *)fault))
         qx_log("[fault]   fault addr = image+0x%llx",
                (unsigned long long)(fault - (uintptr_t)g_img_lo));
-    /* The faulting instruction was fetched, so its bytes are readable when RIP
-     * is inside the committed image (leave a 16-byte margin before the end). */
-    if (in_image(rip) && rip + 16 <= g_img_hi) {
+
+    /* The faulting instruction's bytes, wherever RIP is (it was fetched, so it
+     * is executable/readable) - shows the exact write and its base register. */
+    if (mem_readable(rip, 16)) {
         char hex[16 * 3 + 1];
         int k, n = 0;
         for (k = 0; k < 16; k++)
@@ -262,6 +300,38 @@ static LONG CALLBACK qx_fs_diag_veh(PEXCEPTION_POINTERS info)
         qx_log("[fault]   bytes@RIP: %s", hex);
         if (rip[0] == 0x64)
             qx_log("[fault]   (an %%fs access the TLS handler did not service)");
+    }
+
+    /* Registers, so the near-null base pointer behind the fault is visible. */
+    qx_log("[fault]   rax=%llx rcx=%llx rdx=%llx rbx=%llx rsi=%llx rdi=%llx",
+           (unsigned long long)c->Rax, (unsigned long long)c->Rcx,
+           (unsigned long long)c->Rdx, (unsigned long long)c->Rbx,
+           (unsigned long long)c->Rsi, (unsigned long long)c->Rdi);
+    qx_log("[fault]   r8=%llx r9=%llx r10=%llx r11=%llx rbp=%llx rsp=%llx",
+           (unsigned long long)c->R8, (unsigned long long)c->R9,
+           (unsigned long long)c->R10, (unsigned long long)c->R11,
+           (unsigned long long)c->Rbp, (unsigned long long)c->Rsp);
+
+    /* Call trail: scan the stack for return addresses that land inside the
+     * engine image - these are the engine call sites that led here, so we can
+     * see which constructor/shim path triggered the bad call. */
+    {
+        const uint64_t *sp = (const uint64_t *)(uintptr_t)c->Rsp;
+        int shown = 0, k;
+        if (mem_readable(sp, 8)) {
+            for (k = 0; k < 64 && shown < 8; k++) {
+                const void *slot = (const char *)sp + (size_t)k * 8;
+                uint64_t v;
+                if (!mem_readable(slot, 8))
+                    break;
+                v = ((const uint64_t *)slot)[0];
+                if (in_image((const void *)(uintptr_t)v)) {
+                    qx_log("[fault]   stack[+%02x] -> image+0x%llx",
+                           k * 8, (unsigned long long)(v - (uint64_t)(uintptr_t)g_img_lo));
+                    shown++;
+                }
+            }
+        }
     }
     return EXCEPTION_CONTINUE_SEARCH; /* report only; let the fault proceed */
 }
