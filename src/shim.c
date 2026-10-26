@@ -108,6 +108,42 @@ int qx_shim_dump_pending(void)
     return g_trap_n;
 }
 
+/*
+ * Data counterpart to the named trap: an unimplemented *data* symbol (an
+ * STT_OBJECT the engine binds and then reads or writes) must resolve to real,
+ * zeroed, read/write storage - never an executable stub. Otherwise the engine
+ * reads code bytes as data, and worse, reading a function pointer out of what
+ * it thinks is a struct (e.g. a `FILE` via `__sF`) and calling it jumps into
+ * the trap page at a garbage offset. A zeroed slot instead yields NULL/0, which
+ * the engine's own null checks handle. Slots are bump-allocated from one page,
+ * deduplicated by name, and large enough for the structs the engine expects. */
+#define QX_DATA_SLOT_BYTES 1024
+#define QX_DATA_SLOT_CAP 256
+static const char *g_data_names[QX_DATA_SLOT_CAP];
+static unsigned char *g_data_page;   /* QX_DATA_SLOT_CAP * QX_DATA_SLOT_BYTES, RW, zeroed */
+static int g_data_n;
+
+void *qx_shim_named_data(const char *name)
+{
+    int i;
+    if (!name)
+        name = "?";
+    for (i = 0; i < g_data_n; i++)
+        if (strcmp(g_data_names[i], name) == 0)
+            return g_data_page + (size_t)i * QX_DATA_SLOT_BYTES;
+    if (g_data_n >= QX_DATA_SLOT_CAP)
+        return qx_shim_trap_addr();   /* out of slots: better than a code stub */
+    if (!g_data_page) {
+        g_data_page = (unsigned char *)VirtualAlloc(
+            NULL, (SIZE_T)QX_DATA_SLOT_CAP * QX_DATA_SLOT_BYTES,
+            MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); /* zero-filled by the OS */
+        if (!g_data_page)
+            return qx_shim_trap_addr();
+    }
+    g_data_names[g_data_n] = name;
+    return g_data_page + (size_t)g_data_n++ * QX_DATA_SLOT_BYTES;
+}
+
 /* --- libc: memory and strings (pure) --- */
 static SYSV void *sh_memcpy(void *d, const void *s, size_t n) { return memcpy(d, s, n); }
 static SYSV void *sh_memmove(void *d, const void *s, size_t n) { return memmove(d, s, n); }

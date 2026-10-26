@@ -144,6 +144,7 @@ void qx_elf_run_init(const qx_elf_image *img);
 void *qx_shim_resolve(const char *name); /* real implementation, or NULL */
 void *qx_shim_trap_addr(void);           /* the placeholder trap's address */
 void *qx_shim_named_trap(const char *name); /* a trap that names the missing symbol when hit */
+void *qx_shim_named_data(const char *name); /* zeroed R/W storage for an unimplemented data symbol */
 int qx_shim_dump_pending(void);             /* log every still-unimplemented symbol; returns the count */
 void *qx_thread_resolve(const char *name); /* pthreads/sched slice, or NULL */
 void *qx_format_resolve(const char *name); /* variadic printf/log slice, or NULL */
@@ -162,6 +163,12 @@ int qx_gl_smoketest(void);                  /* gltest.c: drive ANGLE->D3D on the
 void *qx_jni_javavm(void);                  /* the stand-in JavaVM* (JNIInvokeInterface) */
 void *qx_jni_env(void);                     /* the stand-in JNIEnv* for the calling thread */
 int qx_jni_call_onload(void *jni_onload);   /* call the engine's JNI_OnLoad; returns its version or -1 */
+/* tls.c - %fs TLS emulation so bionic's stack-guard/thread-pointer reads work on
+ * Windows x64 (which leaves the %fs base at 0), via a vectored exception handler. */
+void qx_tls_init(void);                     /* install the handler + set up this thread's block */
+void *qx_tls_block(void);                   /* this thread's TLS block (creating it if needed) */
+int qx_fs_emulate(const unsigned char *insn, CONTEXT *ctx, void *block); /* decode+emulate one %fs insn; len or 0 */
+int qx_tls_selftest(int *total);            /* decoder/emulator checks; returns failures */
 /* socket fds are not CRT descriptors, so stdio.c routes close/read/write for them here */
 int qx_socket_is_sock(int fd);
 int qx_socket_close(int fd);

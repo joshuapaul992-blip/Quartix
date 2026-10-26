@@ -27,6 +27,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 #define SYSV __attribute__((sysv_abi))
 
@@ -401,6 +402,56 @@ static SYSV jint jr_EnsureLocalCapacity(void *env, jint n) { (void)env; (void)n;
 static SYSV jint jr_PushLocalFrame(void *env, jint n) { (void)env; (void)n; return JNI_OK; }
 static SYSV void *jr_PopLocalFrame(void *env, void *r) { (void)env; return r; }
 static SYSV void jr_FatalError(void *env, const char *m) { (void)env; qx_err("[jni] FatalError: %s", m ? m : "?"); ExitProcess(134); }
+
+/* --- the Roblox Java interfaces the engine calls from JNI_OnLoad -------------
+ * The engine looks up static methods on a handful of com.roblox.* classes and
+ * calls them to learn the locale, the signed-in user, and the device. Method
+ * IDs here are the interned "static Class.name()sig" strings, so we dispatch by
+ * matching the method name. These stand in for the Android app's Java layer; the
+ * values are safe defaults for a not-yet-signed-in client. Objects we must hand
+ * back (e.g. DeviceStaticParams) are non-NULL sentinels whose own getters the
+ * engine then calls through the instance-method path. */
+static int g_obj_device_static_params;   /* sentinel: NativeGLJavaInterface.getDeviceStaticParams() */
+#define MID_HAS(mid, s) ((mid) && strstr((const char *)(mid), (s)) != NULL)
+
+static SYSV void *jr_CallStaticObjectMethodV(void *env, void *cls, void *mid, va_list ap)
+{
+    (void)cls; (void)ap;
+    qx_log("[jni] CallStaticObjectMethodV %s", mid ? (char *)mid : "?");
+    if (MID_HAS(mid, "getDeviceStaticParams"))
+        return &g_obj_device_static_params;
+    if (MID_HAS(mid, "Locale"))                 /* getLocale/getRobloxLocale/getGameLocale */
+        return jr_NewStringUTF(env, "en_us");
+    if (MID_HAS(mid, "getUsername") || MID_HAS(mid, "getDisplayName"))
+        return jr_NewStringUTF(env, "Player");
+    if (MID_HAS(mid, "getPlatformName"))
+        return jr_NewStringUTF(env, "Windows");
+    if (MID_HAS(mid, "getTheme"))
+        return jr_NewStringUTF(env, "Light");
+    if (MID_HAS(mid, "()Ljava/lang/String;"))   /* any other String getter: empty, non-NULL */
+        return jr_NewStringUTF(env, "");
+    return NULL;
+}
+static SYSV jlong jr_CallStaticLongMethodV(void *env, void *cls, void *mid, va_list ap)
+{
+    (void)env; (void)cls; (void)ap;
+    qx_log("[jni] CallStaticLongMethodV %s", mid ? (char *)mid : "?");
+    if (MID_HAS(mid, "getProcessTimestamp"))
+        return (jlong)GetTickCount64();
+    return 0; /* getUserId and friends: 0 = not signed in */
+}
+static SYSV jint jr_CallStaticIntMethodV(void *env, void *cls, void *mid, va_list ap)
+{
+    (void)env; (void)cls; (void)ap;
+    qx_log("[jni] CallStaticIntMethodV %s", mid ? (char *)mid : "?");
+    return 0; /* membership type None, etc. */
+}
+static SYSV jboolean jr_CallStaticBooleanMethodV(void *env, void *cls, void *mid, va_list ap)
+{
+    (void)env; (void)cls; (void)ap;
+    qx_log("[jni] CallStaticBooleanMethodV %s", mid ? (char *)mid : "?");
+    return JNI_FALSE; /* under-13 no, has-subscription no */
+}
 
 /* JavaVM (invoke interface) */
 static SYSV jint jr_GetEnv(void *vm, void **penv, jint ver) { (void)vm; (void)ver; if (penv) *penv = (void *)&g_env; return JNI_OK; }
@@ -900,6 +951,11 @@ static void jni_fill(struct JNINativeInterface_ *t)
     t->PushLocalFrame = (void *)jr_PushLocalFrame;
     t->PopLocalFrame = (void *)jr_PopLocalFrame;
     t->FatalError = (void *)jr_FatalError;
+    /* the Roblox Java interfaces the engine calls at startup */
+    t->CallStaticObjectMethodV = (void *)jr_CallStaticObjectMethodV;
+    t->CallStaticLongMethodV = (void *)jr_CallStaticLongMethodV;
+    t->CallStaticIntMethodV = (void *)jr_CallStaticIntMethodV;
+    t->CallStaticBooleanMethodV = (void *)jr_CallStaticBooleanMethodV;
 }
 
 static int g_jni_ready;

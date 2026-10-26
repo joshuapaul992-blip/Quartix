@@ -143,6 +143,11 @@ int qx_runtime_jnitest(const qx_paths *p)
         return 0;
     }
 
+    /* Set up %fs TLS emulation before any engine code runs: bionic reads its
+     * stack-guard canary from %fs:0x28, which faults on Windows x64 without this
+     * (the constructors are full of such reads). */
+    qx_tls_init();
+
     /* Run the engine's static constructors. This is where global C++ objects
      * are built; it must happen before JNI_OnLoad. */
     qx_log("");

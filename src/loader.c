@@ -107,8 +107,15 @@ static void *resolve_symbol(struct reloc_ctx *c, uint32_t sym, int *resolved)
         *resolved = 1;
         return addr;
     }
-    /* Not implemented yet: bind to a trap that names this symbol if ever
-     * called, so the log points straight at what to build next. */
+    /* Not implemented yet. A function binds to a trap that names the symbol if
+     * ever called; a data object (STT_OBJECT) binds to zeroed R/W storage, so
+     * the engine reads NULL/0 rather than executable bytes. st_info's low
+     * nibble is the symbol type (STT_FUNC = 2, STT_OBJECT = 1). */
+    {
+        uint8_t st_info = c->symtab[(uint64_t)sym * 24 + 4];
+        if ((st_info & 0xf) == 1 /* STT_OBJECT */)
+            return qx_shim_named_data(name);
+    }
     return qx_shim_named_trap(name);
 }
 
