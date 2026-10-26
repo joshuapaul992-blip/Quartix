@@ -60,6 +60,22 @@ static FILE *qx_stdin_f;
 static FILE *qx_stdout_f;
 static FILE *qx_stderr_f;
 
+/*
+ * bionic also exposes the standard streams as the array __sF, with stdin/stdout/
+ * stderr being &__sF[0]/[1]/[2]; libc++abi (statically linked into libroblox)
+ * writes to stderr through that form. The __sF entries are NOT valid MS-CRT
+ * FILEs, so they must never reach the CRT. We reserve a region for __sF and
+ * treat any pointer inside it as a standard stream - routing writes to the log
+ * and reads to EOF - without needing to know bionic's exact sizeof(FILE) (the
+ * region is large enough that &__sF[0..2] all land inside it).
+ */
+static unsigned char qx_sF[2048];
+
+static int is_sf(void *s)
+{
+    return (unsigned char *)s >= qx_sF && (unsigned char *)s < qx_sF + sizeof qx_sF;
+}
+
 static void stdio_init(void)
 {
     if (!qx_stdout_f) {
@@ -69,9 +85,12 @@ static void stdio_init(void)
     }
 }
 
+/* A stream whose writes route to the log (and reads/ops are stubbed): the
+ * host's stdout/stderr, our stream globals, or any __sF entry. */
 static int is_std_out_err(void *stream)
 {
-    return stream == qx_stdout_f || stream == qx_stderr_f ||
+    return is_sf(stream) ||
+           stream == qx_stdout_f || stream == qx_stderr_f ||
            stream == (void *)stdout || stream == (void *)stderr;
 }
 
@@ -159,13 +178,18 @@ static SYSV void *qx_fdopen(int fd, const char *mode)
         carry_errno();
     return f;
 }
-static SYSV int qx_fclose(void *f) { return fclose((FILE *)f); }
-static SYSV int qx_feof(void *f) { return feof((FILE *)f); }
-static SYSV int qx_ferror(void *f) { return ferror((FILE *)f); }
-static SYSV int qx_fflush(void *f) { return fflush((FILE *)f); }
+/* The standard-stream sentinels (__sF / routed stdio) are not CRT FILEs, so
+ * these operations are stubbed for them rather than passed to the CRT. */
+static SYSV int qx_fclose(void *f) { return is_std_out_err(f) ? 0 : fclose((FILE *)f); }
+static SYSV int qx_feof(void *f) { return is_std_out_err(f) ? 0 : feof((FILE *)f); }
+static SYSV int qx_ferror(void *f) { return is_std_out_err(f) ? 0 : ferror((FILE *)f); }
+static SYSV int qx_fflush(void *f) { return is_std_out_err(f) ? 0 : fflush((FILE *)f); }
 static SYSV size_t qx_fread(void *p, size_t sz, size_t nm, void *f)
 {
-    size_t r = fread(p, sz, nm, (FILE *)f);
+    size_t r;
+    if (is_std_out_err(f))
+        return 0; /* no input from a routed stream */
+    r = fread(p, sz, nm, (FILE *)f);
     if (r < nm && ferror((FILE *)f))
         carry_errno();
     return r;
@@ -178,7 +202,7 @@ static SYSV size_t qx_fwrite(const void *p, size_t sz, size_t nm, void *f)
     }
     return fwrite(p, sz, nm, (FILE *)f);
 }
-static SYSV char *qx_fgets(char *buf, int n, void *f) { return fgets(buf, n, (FILE *)f); }
+static SYSV char *qx_fgets(char *buf, int n, void *f) { return is_std_out_err(f) ? NULL : fgets(buf, n, (FILE *)f); }
 static SYSV int qx_fputc(int c, void *f)
 {
     if (is_std_out_err(f)) {
@@ -196,7 +220,7 @@ static SYSV int qx_fputs(const char *s, void *f)
     }
     return fputs(s, (FILE *)f);
 }
-static SYSV int qx_getc(void *f) { return fgetc((FILE *)f); }
+static SYSV int qx_getc(void *f) { return is_std_out_err(f) ? EOF : fgetc((FILE *)f); }
 static SYSV int qx_puts(const char *s)
 {
     stdio_init();
@@ -204,11 +228,11 @@ static SYSV int qx_puts(const char *s)
     return 0;
 }
 /* bionic fseek/ftell use a 64-bit long (LP64), so take/return 64-bit offsets */
-static SYSV int qx_fseek(void *f, long long off, int whence) { return _fseeki64((FILE *)f, off, whence); }
-static SYSV long long qx_ftell(void *f) { return _ftelli64((FILE *)f); }
+static SYSV int qx_fseek(void *f, long long off, int whence) { return is_std_out_err(f) ? 0 : _fseeki64((FILE *)f, off, whence); }
+static SYSV long long qx_ftell(void *f) { return is_std_out_err(f) ? 0 : _ftelli64((FILE *)f); }
 static SYSV int qx_setvbuf(void *f, char *buf, int mode, size_t size)
 {
-    return setvbuf((FILE *)f, buf, mode, size);
+    return is_std_out_err(f) ? 0 : setvbuf((FILE *)f, buf, mode, size);
 }
 
 /* ---- raw descriptors ------------------------------------------------------ */
@@ -367,7 +391,7 @@ static SYSV int qx_unlink(const char *path)
     return r;
 }
 
-static SYSV int qx_ungetc(int ch, void *f) { return ungetc(ch, (FILE *)f); }
+static SYSV int qx_ungetc(int ch, void *f) { return is_std_out_err(f) ? EOF : ungetc(ch, (FILE *)f); }
 
 /* ---- stat / fstat / lstat --------------------------------------------------
  * The engine reads a bionic struct stat, whose x86-64 layout is the Linux
@@ -472,6 +496,8 @@ void *qx_stdio_resolve(const char *name)
         return &qx_stdout_f;
     if (strcmp(name, "stderr") == 0)
         return &qx_stderr_f;
+    if (strcmp(name, "__sF") == 0)   /* the array form: stderr == &__sF[2], etc. */
+        return qx_sF;
     for (i = 0; i < sizeof(g_io_table) / sizeof(g_io_table[0]); i++)
         if (strcmp(name, g_io_table[i].name) == 0)
             return g_io_table[i].fn;
