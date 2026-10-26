@@ -26,6 +26,7 @@
  */
 #include "quartix.h"
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #define QX_TLS_SIZE 0x10000u          /* per-thread block; far larger than bionic needs */
@@ -45,6 +46,22 @@
 
 static DWORD g_tls_slot = TLS_OUT_OF_INDEXES;
 static PVOID g_veh;
+static PVOID g_diag_veh;
+
+/* The mapped engine image, so a fault can be located as image+offset. */
+static const unsigned char *g_img_lo;
+static const unsigned char *g_img_hi;
+
+void qx_tls_set_image_range(const void *base, uint64_t span)
+{
+    g_img_lo = (const unsigned char *)base;
+    g_img_hi = g_img_lo ? g_img_lo + span : NULL;
+}
+
+static int in_image(const void *p)
+{
+    return g_img_lo && (const unsigned char *)p >= g_img_lo && (const unsigned char *)p < g_img_hi;
+}
 
 static void *tls_block_for_current_thread(void)
 {
@@ -194,6 +211,61 @@ static LONG CALLBACK qx_fs_veh(PEXCEPTION_POINTERS info)
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
+/*
+ * Last-chance crash diagnostics. The %fs handler above (installed first)
+ * resolves the engine's TLS accesses; any access violation it declines is a
+ * real fault. Rather than let it surface only as Windows' bare "stopped
+ * working" dialog, log what is needed to locate it - the fault address, the
+ * faulting instruction's address and its offset into the mapped engine image,
+ * and the instruction bytes - then let the normal crash path proceed. This
+ * turns a silent hardware crash into actionable output. It never resumes
+ * execution and never swallows the fault, so it cannot mask or alter a genuine
+ * engine SEH handler; it only reports. Capped so a handled, repeated fault
+ * cannot flood the log.
+ */
+static LONG CALLBACK qx_fs_diag_veh(PEXCEPTION_POINTERS info)
+{
+    static volatile LONG logged;
+    EXCEPTION_RECORD *er = info->ExceptionRecord;
+    CONTEXT *c = info->ContextRecord;
+    const unsigned char *rip;
+    uintptr_t fault;
+    int acc;
+
+    if (er->ExceptionCode != (DWORD)EXCEPTION_ACCESS_VIOLATION)
+        return EXCEPTION_CONTINUE_SEARCH;
+    if (InterlockedIncrement(&logged) > 8)
+        return EXCEPTION_CONTINUE_SEARCH; /* reported enough already */
+
+    rip = (const unsigned char *)(uintptr_t)c->Rip;
+    acc = er->NumberParameters >= 1 ? (int)er->ExceptionInformation[0] : -1;
+    fault = er->NumberParameters >= 2 ? (uintptr_t)er->ExceptionInformation[1] : 0;
+
+    qx_log("[fault] access violation (%s) at 0x%llx",
+           acc == 1 ? "write" : acc == 8 ? "exec" : "read", (unsigned long long)fault);
+    if (in_image(rip))
+        qx_log("[fault]   RIP 0x%llx = image+0x%llx",
+               (unsigned long long)(uintptr_t)rip,
+               (unsigned long long)(uintptr_t)(rip - g_img_lo));
+    else
+        qx_log("[fault]   RIP 0x%llx (outside the engine image)", (unsigned long long)(uintptr_t)rip);
+    if (in_image((const void *)fault))
+        qx_log("[fault]   fault addr = image+0x%llx",
+               (unsigned long long)(fault - (uintptr_t)g_img_lo));
+    /* The faulting instruction was fetched, so its bytes are readable when RIP
+     * is inside the committed image (leave a 16-byte margin before the end). */
+    if (in_image(rip) && rip + 16 <= g_img_hi) {
+        char hex[16 * 3 + 1];
+        int k, n = 0;
+        for (k = 0; k < 16; k++)
+            n += sprintf(hex + n, "%02x ", rip[k]);
+        qx_log("[fault]   bytes@RIP: %s", hex);
+        if (rip[0] == 0x64)
+            qx_log("[fault]   (an %%fs access the TLS handler did not service)");
+    }
+    return EXCEPTION_CONTINUE_SEARCH; /* report only; let the fault proceed */
+}
+
 /* Install the %fs handler and set up the calling thread's TLS block. Idempotent;
  * call once before transferring control to engine code. */
 void qx_tls_init(void)
@@ -203,6 +275,8 @@ void qx_tls_init(void)
     tls_block_for_current_thread();
     if (!g_veh)
         g_veh = AddVectoredExceptionHandler(1, qx_fs_veh); /* 1 = first in the chain */
+    if (!g_diag_veh)
+        g_diag_veh = AddVectoredExceptionHandler(0, qx_fs_diag_veh); /* last: after %fs */
 }
 
 /* ---- self-test: exercises the decoder/emulator deterministically ---------- */
